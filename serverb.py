@@ -289,7 +289,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
             employeeName = query.get("employeeName", [None])[0] or ""
 
             def job(cursor):
-                new_history_entry = f"{datetime.utcnow().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
+                new_history_entry = f"{datetime.now().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
                 def append_history(existing_history, new_line):
                     if not existing_history or existing_history.strip() == "":
                         return new_line
