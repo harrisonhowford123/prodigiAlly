@@ -896,30 +896,31 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
                 # ISO Barcode lookup (unique)
                 if iso_barcode:
-                    cursor.execute("SELECT history FROM tracking_data WHERE isoBarcode = ?", (iso_barcode,))
+                    cursor.execute("SELECT history, isoBarcode FROM tracking_data WHERE isoBarcode = ?", (iso_barcode,))
                     row = cursor.fetchone()
                     if row and row[0]:
-                        history_rows.append(row[0].strip().split("\n"))
+                        # Prepend isoBarcode to each entry
+                        history_rows.append([row[1]] + row[0].strip().split("\n"))
 
                 # Lead Barcode lookup (may have multiple)
                 if lead_barcode:
-                    cursor.execute("SELECT history FROM tracking_data WHERE leadBarcode = ?", (lead_barcode,))
+                    cursor.execute("SELECT history, isoBarcode FROM tracking_data WHERE leadBarcode = ?", (lead_barcode,))
                     for row in cursor.fetchall():
                         if row[0]:
-                            history_rows.append(row[0].strip().split("\n"))
+                            history_rows.append([row[1]] + row[0].strip().split("\n"))
 
                 # Order Number lookup (may have multiple)
                 if order_number:
-                    cursor.execute("SELECT history FROM tracking_data WHERE orderNumber = ?", (order_number,))
+                    cursor.execute("SELECT history, isoBarcode FROM tracking_data WHERE orderNumber = ?", (order_number,))
                     for row in cursor.fetchall():
                         if row[0]:
-                            history_rows.append(row[0].strip().split("\n"))
+                            history_rows.append([row[1]] + row[0].strip().split("\n"))
 
                 conn.close()
 
                 response = {
                     "status": "success",
-                    "history": history_rows  # 2D list of history entries
+                    "history": history_rows  # 2D list of history entries including isoBarcode
                 }
 
                 self.send_response(200)
@@ -937,6 +938,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     "message": str(e)
                 }).encode("utf-8"))
             return
+
 
 
 
