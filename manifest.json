@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "ProdigiAlly Barcode Scanner",
+  "version": "1.0.1",
+  "description": "Capture barcode scans from OneFlow and sync with ProdigiAlly",
+  
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  
+  "host_permissions": [
+    "https://pro.oneflowcloud.com/*",
+    "https://pro.oneflow.com/*",
+    "http://192.168.111.230:8080/*"
+  ],
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://pro.oneflowcloud.com/*",
+        "https://pro.oneflow.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  
+  "background": {
+    "service_worker": "background.js"
+  },
+  
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

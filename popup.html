@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 350px;
+      min-height: 400px;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    .container {
+      padding: 20px;
+    }
+    
+    h1 {
+      color: white;
+      font-size: 20px;
+      margin: 0 0 20px 0;
+      text-align: center;
+    }
+    
+    .login-form, .main-view {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .form-group {
+      margin-bottom: 15px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #333;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    
+    input, select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 2px solid #E6E1D6;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+      background: #FAFAFA;
+    }
+    
+    input:focus, select:focus {
+      outline: none;
+      border-color: #6D05FF;
+      background: white;
+    }
+    
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #6D05FF;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    
+    button:hover {
+      background: #8B1CFF;
+    }
+    
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .logout-btn {
+      background: #FF0000;
+      margin-top: 10px;
+    }
+    
+    .logout-btn:hover {
+      background: #CC0000;
+    }
+    
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin: 15px 0;
+      text-align: center;
+      font-weight: bold;
+    }
+    
+    .status.active {
+      background: #D4EDDA;
+      color: #155724;
+      border: 1px solid #C3E6CB;
+    }
+    
+    .status.inactive {
+      background: #F8D7DA;
+      color: #721C24;
+      border: 1px solid #F5C6CB;
+    }
+    
+    .barcode-display {
+      background: #F0F0F0;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 15px 0;
+      min-height: 60px;
+    }
+    
+    .barcode-display h3 {
+      margin: 0 0 10px 0;
+      color: #333;
+      font-size: 14px;
+    }
+    
+    .barcode-list {
+      max-height: 120px;
+      overflow-y: auto;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 8px;
+    }
+    
+    .barcode-item {
+      padding: 4px 8px;
+      background: #E6E1D6;
+      margin: 4px 0;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    
+    .error {
+      color: red;
+      font-size: 12px;
+      margin-top: 5px;
+    }
+    
+    .hidden {
+      display: none;
+    }
+    
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #6D05FF;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>ProdigiAlly Scanner</h1>
+    
+    <!-- Login View -->
+    <div id="loginView" class="login-form">
+      <div class="form-group">
+        <label for="username">Employee Name</label>
+        <select id="username">
+          <option value="">Select Employee...</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter password">
+      </div>
+      
+      <div class="form-group">
+        <label for="workstation">Workstation</label>
+        <select id="workstation">
+          <option value="">Select Workstation...</option>
+        </select>
+      </div>
+      
+      <button id="loginBtn">Login & Start Scanning</button>
+      <div id="loginError" class="error hidden"></div>
+    </div>
+    
+    <!-- Main View (after login) -->
+    <div id="mainView" class="main-view hidden">
+      <div class="status active">
+        <div>✓ Scanning Active</div>
+        <div style="font-size: 12px; margin-top: 5px;">
+          User: <span id="currentUser"></span><br>
+          Station: <span id="currentStation"></span>
+        </div>
+      </div>
+      
+      <div class="barcode-display">
+        <h3>Recent Scans (Last 10)</h3>
+        <div id="barcodeList" class="barcode-list">
+          <div style="color: #999; text-align: center;">No scans yet</div>
+        </div>
+      </div>
+      
+      <button class="logout-btn" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
