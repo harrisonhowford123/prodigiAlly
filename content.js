@@ -236,74 +236,156 @@ async function processBarcodeCapture(barcode) {
     
     if (data.status === 'success') {
       console.log(`[ProdigiAlly] Successfully sent barcode to server`);
-      showVisualFeedback('✓ Scanned: ' + barcode, '#28A745');
+      showVisualFeedback('✓ Scanned: ' + barcode, '#6D05FF');
     } else {
       console.error('[ProdigiAlly] Server error:', data.message);
-      showVisualFeedback('✗ Error: ' + data.message, '#FF0000');
+      showVisualFeedback('✗ Error: ' + data.message, '#FF4C4C');
     }
   } catch (error) {
     console.error('[ProdigiAlly] Failed to send barcode to server:', error);
-    showVisualFeedback('✗ Connection Error', '#FF0000');
+    showVisualFeedback('✗ Connection Error', '#FF4C4C');
   }
 }
 
 function showVisualFeedback(message, color) {
-  // Remove any existing notifications
-  const existing = document.querySelector('.prodigially-notification');
-  if (existing) {
-    existing.remove();
+  // Determine if this is an error (red) or success (purple)
+  const isError = color === '#FF4C4C';
+  
+  // Create status banner if it doesn't exist
+  let statusBanner = document.querySelector('.prodigially-status-banner');
+  if (!statusBanner) {
+    statusBanner = document.createElement('div');
+    statusBanner.className = 'prodigially-status-banner';
+    statusBanner.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 999999;
+      max-width: 300px;
+    `;
+    document.body.appendChild(statusBanner);
+    
+    // Add animation styles if not present
+    if (!document.querySelector('style[data-prodigially]')) {
+      const style = document.createElement('style');
+      style.setAttribute('data-prodigially', 'true');
+      style.textContent = `
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        @keyframes slideOut {
+          from {
+            transform: translateX(0);
+            opacity: 1;
+          }
+          to {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+        }
+        .prodigially-close-btn {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          width: 20px;
+          height: 20px;
+          background: rgba(255, 255, 255, 0.3);
+          border: none;
+          border-radius: 50%;
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 18px;
+          color: white;
+          font-weight: bold;
+          transition: background 0.2s;
+        }
+        .prodigially-close-btn:hover {
+          background: rgba(255, 255, 255, 0.5);
+        }
+      `;
+      document.head.appendChild(style);
+    }
   }
   
-  // Create a temporary notification element
+  // Create the permanent status box if it doesn't exist
+  let permanentStatus = statusBanner.querySelector('.prodigially-permanent-status');
+  if (!permanentStatus && currentEmployee) {
+    permanentStatus = document.createElement('div');
+    permanentStatus.className = 'prodigially-permanent-status';
+    permanentStatus.style.cssText = `
+      background: #E8F5E9;
+      color: #2E7D32;
+      padding: 12px 20px;
+      border-radius: 5px;
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+      font-weight: bold;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      margin-bottom: 10px;
+      border: 2px solid #6D05FF;
+      animation: slideIn 0.3s ease;
+    `;
+    permanentStatus.innerHTML = `
+      <div style="font-size: 14px; margin-bottom: 5px;">✓ Scanning Active</div>
+      <div style="font-size: 12px; opacity: 0.9;">
+        ${currentEmployee}<br>
+        ${currentWorkstation}
+      </div>
+    `;
+    statusBanner.appendChild(permanentStatus);
+  }
+  
+  // Create notification below the status
   const notification = document.createElement('div');
   notification.className = 'prodigially-notification';
-  notification.textContent = message;
   notification.style.cssText = `
-    position: fixed;
-    top: 20px;
-    right: 20px;
     background: ${color};
     color: white;
-    padding: 12px 20px;
+    padding: 12px ${isError ? '40px' : '20px'} 12px 20px;
     border-radius: 5px;
     font-family: Arial, sans-serif;
     font-size: 14px;
     font-weight: bold;
-    z-index: 999999;
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     animation: slideIn 0.3s ease;
-    max-width: 300px;
+    margin-bottom: 10px;
     word-break: break-all;
+    position: relative;
   `;
+  notification.textContent = message;
   
-  // Add animation
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes slideIn {
-      from {
-        transform: translateX(100%);
-        opacity: 0;
-      }
-      to {
-        transform: translateX(0);
-        opacity: 1;
-      }
-    }
-  `;
-  if (!document.querySelector('style[data-prodigially]')) {
-    style.setAttribute('data-prodigially', 'true');
-    document.head.appendChild(style);
+  // Add close button for errors
+  if (isError) {
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'prodigially-close-btn';
+    closeBtn.innerHTML = '×';
+    closeBtn.onclick = () => {
+      notification.style.animation = 'slideOut 0.3s ease';
+      setTimeout(() => {
+        notification.remove();
+      }, 300);
+    };
+    notification.appendChild(closeBtn);
   }
   
-  document.body.appendChild(notification);
+  statusBanner.appendChild(notification);
   
-  // Remove after 3 seconds
-  setTimeout(() => {
-    notification.style.animation = 'slideIn 0.3s ease reverse';
+  // Auto-remove only success messages (not errors)
+  if (!isError) {
     setTimeout(() => {
-      notification.remove();
-    }, 300);
-  }, 3000);
+      notification.style.animation = 'slideOut 0.3s ease';
+      setTimeout(() => {
+        notification.remove();
+      }, 300);
+    }, 3000);
+  }
 }
 
 function startCapture(employee, workstation) {
@@ -323,6 +405,12 @@ function stopCapture() {
   currentWorkstation = null;
   lastProcessedBarcode = null;
   lastProcessedTime = 0;
+  
+  // Remove the status banner
+  const statusBanner = document.querySelector('.prodigially-status-banner');
+  if (statusBanner) {
+    statusBanner.remove();
+  }
   
   console.log('[ProdigiAlly] Stopped capturing');
 }
