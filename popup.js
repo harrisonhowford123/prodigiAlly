@@ -51,6 +51,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadInitialData() {
   try {
+    // Clear existing options first
+    usernameSelect.innerHTML = '<option value="">Select Employee...</option>';
+    workstationSelect.innerHTML = '<option value="">Select Workstation...</option>';
+    
     // Load employees
     const empResponse = await fetch(`${SERVER_URL}/api/employees`);
     const empData = await empResponse.json();
@@ -195,11 +199,14 @@ async function handleLogout() {
     currentWorkstation = null;
     isLoggedIn = false;
     passwordInput.value = '';
-    usernameSelect.value = '';
-    workstationSelect.value = '';
     
+    // Show login view
     loginView.classList.remove('hidden');
     mainView.classList.add('hidden');
+    
+    // IMPORTANT: Reload the employee and workstation dropdowns
+    await loadInitialData();
+    
   } catch (error) {
     console.error('Logout error:', error);
   }
@@ -226,6 +233,9 @@ async function loadRecentScans() {
       item.textContent = scan;
       barcodeList.appendChild(item);
     });
+  } else {
+    // Show "No scans yet" message
+    barcodeList.innerHTML = '<div style="color: #999; text-align: center;">No scans yet</div>';
   }
 }
 
@@ -235,6 +245,7 @@ function updateBarcodeDisplay(barcode) {
   item.className = 'barcode-item';
   item.textContent = barcode;
   
+  // Remove "No scans yet" message if present
   if (barcodeList.children[0]?.style?.color === '#999') {
     barcodeList.innerHTML = '';
   }

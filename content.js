@@ -189,11 +189,20 @@ async function processBarcodeCapture(barcode) {
   
   console.log(`[ProdigiAlly] Processing barcode: ${barcode}`);
   
-  // Notify popup
+  // ALWAYS save to storage (even if popup is closed)
+  chrome.storage.local.get(['recentScans'], result => {
+    const scans = result.recentScans || [];
+    scans.push(barcode);
+    if (scans.length > 50) scans.shift(); // Keep max 50 in storage
+    chrome.storage.local.set({recentScans: scans});
+    console.log(`[ProdigiAlly] Saved barcode to storage. Total scans: ${scans.length}`);
+  });
+  
+  // Try to notify popup (will fail silently if popup is closed)
   chrome.runtime.sendMessage({
     type: 'BARCODE_SCANNED',
     barcode: barcode
-  }).catch(err => console.log('[ProdigiAlly] Could not notify popup:', err));
+  }).catch(err => console.log('[ProdigiAlly] Could not notify popup (popup likely closed):', err));
   
   // Determine if it's lead or ISO barcode
   let leadBarcode = null;
