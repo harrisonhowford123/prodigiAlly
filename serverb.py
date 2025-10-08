@@ -231,18 +231,23 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         containerID = int(containerID)
                     except ValueError:
                         containerID = None
+
                 new_history_entry = f"{datetime.now().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
+
                 def append_history(existing_history, new_line):
                     if not existing_history or existing_history.strip() == "":
                         return new_line
                     lines = existing_history.strip().split("\n")
+
                     def strip_timestamp(line):
                         parts = line.split(" | ", 1)
                         return parts[1] if len(parts) > 1 else line
+
                     if strip_timestamp(lines[-1]) != strip_timestamp(new_line):
                         lines.append(new_line)
                     return "\n".join(lines)
 
+                # --- ISO barcode branch ---
                 if isoBarcode:
                     cursor.execute("SELECT containerID, orderNumber, leadBarcode, history FROM tracking_data WHERE isoBarcode = ?", (isoBarcode,))
                     row = cursor.fetchone()
@@ -263,6 +268,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             VALUES (?, ?, ?, ?, ?)
                         """, (containerID, orderNumber, leadBarcode, isoBarcode, new_history_entry))
 
+                # --- Lead barcode branch ---
                 if leadBarcode:
                     cursor.execute("SELECT isoBarcode, containerID, orderNumber, history FROM tracking_data WHERE leadBarcode = ?", (leadBarcode,))
                     rows = cursor.fetchall()
@@ -272,17 +278,27 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         updated_history = append_history(history_existing, new_history_entry)
                         cursor.execute("UPDATE tracking_data SET history = ?, containerID = ?, orderNumber = ? WHERE isoBarcode = ?", (updated_history, container_to_update, order_to_update, iso))
 
+                # --- Order number only branch (new behavior added here) ---
                 if not isoBarcode and not leadBarcode and orderNumber:
                     cursor.execute("SELECT isoBarcode, containerID, leadBarcode, history FROM tracking_data WHERE orderNumber = ?", (orderNumber,))
                     rows = cursor.fetchall()
-                    for iso, container_existing, lead_existing, history_existing in rows:
-                        container_to_update = containerID if containerID is not None else container_existing
-                        lead_to_update = leadBarcode if leadBarcode else lead_existing
-                        updated_history = append_history(history_existing, new_history_entry)
-                        cursor.execute("UPDATE tracking_data SET history = ?, containerID = ?, leadBarcode = ? WHERE isoBarcode = ?", (updated_history, container_to_update, lead_to_update, iso))
+                    if rows:
+                        # Update existing entries
+                        for iso, container_existing, lead_existing, history_existing in rows:
+                            container_to_update = containerID if containerID is not None else container_existing
+                            lead_to_update = leadBarcode if leadBarcode else lead_existing
+                            updated_history = append_history(history_existing, new_history_entry)
+                            cursor.execute("UPDATE tracking_data SET history = ?, containerID = ?, leadBarcode = ? WHERE isoBarcode = ?", (updated_history, container_to_update, lead_to_update, iso))
+                    else:
+                        # INSERT new row if order number doesn't exist yet
+                        cursor.execute("""
+                            INSERT INTO tracking_data (containerID, orderNumber, history)
+                            VALUES (?, ?, ?)
+                        """, (containerID, orderNumber, new_history_entry))
 
             self.enqueue_tracking_job(job)
             return
+
 
         elif parsed_path.path == "/api/moveContainer":
             debug_log("[GET] Move container request")
