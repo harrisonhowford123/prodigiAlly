@@ -72,8 +72,7 @@ def init_tracking_db():
                 orderNumber TEXT,
                 leadBarcode TEXT,
                 isoBarcode TEXT UNIQUE,
-                history TEXT,
-                itemNum INTEGER
+                history TEXT
             )
         """)
         cursor.execute("PRAGMA journal_mode=WAL")
@@ -218,6 +217,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
         elif parsed_path.path == "/api/orderTrack":
             debug_log("[GET] Order tracking request")
+
             containerID = query.get("containerID", [None])[0]
             orderNumber = query.get("orderNumber", [None])[0]
             isoBarcode = query.get("isoBarcode", [None])[0]
@@ -226,7 +226,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
             employeeName = query.get("employeeName", [None])[0] or ""
 
             def job(cursor):
-                nonlocal containerID, orderNumber, isoBarcode, leadBarcode, workstation, employeeName
+                nonlocal containerID, orderNumber, isoBarcode, leadBarcode, workstation, employeeName, itemNum
                 if containerID is not None:
                     try:
                         containerID = int(containerID)
@@ -256,7 +256,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     )
                     row = cursor.fetchone()
                     if row:
-                        # ISO barcode exists: update it
+                        # ISO exists → update existing row
                         containerID_existing, orderNumber_existing, leadBarcode_existing, history_existing = row
                         containerID_to_update = containerID if containerID is not None else containerID_existing
                         orderNumber_to_update = orderNumber if orderNumber else orderNumber_existing
@@ -268,25 +268,24 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             WHERE isoBarcode = ?
                         """, (updated_history, containerID_to_update, orderNumber_to_update, leadBarcode_to_update, isoBarcode))
                     else:
-                        # ISO barcode does NOT exist: check for existing orderNumber with NULL isoBarcode
+                        # ISO does not exist → check for NULL ISO row with same orderNumber
                         cursor.execute(
-                            "SELECT isoBarcode, containerID, leadBarcode, history FROM tracking_data WHERE orderNumber = ? AND isoBarcode IS NULL",
+                            "SELECT containerID, leadBarcode, history FROM tracking_data WHERE orderNumber = ? AND isoBarcode IS NULL",
                             (orderNumber,)
                         )
                         row = cursor.fetchone()
                         if row:
-                            # Found an existing row with NULL isoBarcode: update it
-                            iso_existing, container_existing, lead_existing, history_existing = row
-                            container_to_update = containerID if containerID is not None else container_existing
-                            lead_to_update = leadBarcode if leadBarcode else lead_existing
-                            updated_history = append_history(history_existing, new_history_entry)
+                            container_existing, lead_existing, history_existing = row
+                            # Create new row for ISO using existing containerID and history
+                            container_to_use = containerID if containerID is not None else container_existing
+                            lead_to_use = leadBarcode if leadBarcode else lead_existing
+                            new_history = append_history(history_existing, new_history_entry)
                             cursor.execute("""
-                                UPDATE tracking_data
-                                SET history = ?, containerID = ?, leadBarcode = ?, isoBarcode = ?
-                                WHERE orderNumber = ? AND isoBarcode IS NULL
-                            """, (updated_history, container_to_update, lead_to_update, isoBarcode, orderNumber))
+                                INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, history)
+                                VALUES (?, ?, ?, ?, ?)
+                            """, (container_to_use, orderNumber, lead_to_use, isoBarcode, new_history))
                         else:
-                            # No matching row: insert new
+                            # No matching NULL ISO row → create new row normally
                             cursor.execute("""
                                 INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, history)
                                 VALUES (?, ?, ?, ?, ?)
@@ -316,7 +315,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     )
                     rows = cursor.fetchall()
                     if rows:
-                        # Update existing entries
                         for iso, container_existing, lead_existing, history_existing in rows:
                             container_to_update = containerID if containerID is not None else container_existing
                             lead_to_update = leadBarcode if leadBarcode else lead_existing
@@ -326,7 +324,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
                                 (updated_history, container_to_update, lead_to_update, iso)
                             )
                     else:
-                        # Insert new row if order number doesn't exist yet
                         cursor.execute("""
                             INSERT INTO tracking_data (containerID, orderNumber, history)
                             VALUES (?, ?, ?)
@@ -334,7 +331,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
             self.enqueue_tracking_job(job)
             return
-
 
 
         elif parsed_path.path == "/api/moveContainer":
