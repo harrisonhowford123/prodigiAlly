@@ -72,7 +72,8 @@ def init_tracking_db():
                 orderNumber TEXT,
                 leadBarcode TEXT,
                 isoBarcode TEXT UNIQUE,
-                history TEXT
+                history TEXT,
+                itemNum INTEGER
             )
         """)
         cursor.execute("PRAGMA journal_mode=WAL")
