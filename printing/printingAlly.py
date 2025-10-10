@@ -87,31 +87,49 @@ def show_batch_moved_popup(root):
     popup.wait_window()
 
 # ---------------- Mode Selector ----------------
+# ---------------- Mode Selector (Fixed + Taller + Width matches drop box) ----------------
 class ModeSelector(Frame):
-    def __init__(self, master, pdf_files, file_listbox, update_confirm_state, loggedEmployee, **kwargs):
+    def __init__(self, master, pdf_files, file_listbox, update_confirm_state, loggedEmployee, drop_frame, **kwargs):
         super().__init__(master, bg="#E6E1D6", bd=1, relief="solid", **kwargs)
         self.pdf_files = pdf_files
         self.file_listbox = file_listbox
         self.update_confirm_state = update_confirm_state
-        self.pack_propagate(False)
+        self.loggedEmployee = loggedEmployee
+        self.drop_frame = drop_frame  # reference to drop box frame
 
-        employee_name = loggedEmployee.employeeName
-        self.text_label = ttk.Label(
+        # Use tk.Label for reliable background color
+        self.text_label = Label(
             self,
-            text=f"{employee_name}'s File Dropbox",
+            text=f"{self.loggedEmployee.employeeName}'s File Dropbox",
             anchor="center",
-            background="#E6E1D6",
-            foreground="black",
+            bg="#E6E1D6",
+            fg="black",
             font=("Arial", 12, "bold")
         )
         self.text_label.pack(fill="both", expand=True)
 
-    def resize(self, window_width, window_height):
-        height = int(window_height * 0.05)
-        width = int(window_width * 0.8)
-        font_size = max(8, int(height * 0.45))
-        self.config(width=width, height=height)
+        # Initial sizing
+        self.update_size(master.winfo_width(), master.winfo_height())
+
+        # Bind to window resize
+        master.bind("<Configure>", self._on_master_resize)
+
+    def _on_master_resize(self, event):
+        # Resize frame and font relative to window size
+        self.update_size(event.width, event.height)
+
+    def update_size(self, window_width, window_height):
+        # Height is 1.3× default
+        frame_height = max(30, int(window_height * 0.05 * 1.3))
+        # Width matches drop_frame width
+        frame_width = self.drop_frame.winfo_width() or int(window_width * 0.8)
+
+        self.config(width=frame_width, height=frame_height)
+
+        # Resize font relative to frame height
+        font_size = max(8, int(frame_height * 0.45))
         self.text_label.config(font=("Arial", font_size, "bold"))
+
 
 # ---------------- Time Selector ----------------
 class TimeSelector:
@@ -238,17 +256,55 @@ def show_time_popup(root, employee_name):
 
 # ---------------- Batch Processing ----------------
 def process_for_database(pdf_files, file_listbox, loggedEmployee, update_confirm_state, root):
+    # --- PDFs (standard PDFFile objects) ---
     for file_obj in pdf_files:
         if isinstance(file_obj, PDFFile):
             orders, leads, isos = extract_pdf_info(file_obj.path)
             for i in range(len(orders)):
                 for iso in isos[i]:
-                    send_tracking_data(None, orders[i], leads[i], iso, "Printer Station: Oneflow Order Forms Printed", loggedEmployee.employeeName)
+                    send_tracking_data(
+                        None,
+                        orders[i],
+                        leads[i],
+                        iso,
+                        "Printer Station: Oneflow Order Forms Printed",
+                        loggedEmployee.employeeName
+                    )
+
+    # --- JPEG/PNG and PDFs treated like images ---
     jpg_files = [f for f in pdf_files if isinstance(f, list)]
     if jpg_files:
         containerNum = fetch_next_container_id()
         for f in jpg_files:
-            send_tracking_data(containerNum, f[1], None, None, f"Printer Station: Sent {f[1]} To Printer", loggedEmployee.employeeName)
+            try:
+                itemNum = f[2] if len(f) > 2 else None
+                prodType = f[0]
+                orderNumber = f[1]
+                workstation_msg = f"Printer Station: Sent {orderNumber} To Printer"
+
+                # 🔍 DEBUG PRINT
+                print(f"[DEBUG] Sending tracking data → "
+                      f"containerID={containerNum}, "
+                      f"orderNumber={orderNumber}, "
+                      f"itemNum={itemNum}, "
+                      f"prodType={prodType}, "
+                      f"employee={loggedEmployee.employeeName}, "
+                      f"workstation='{workstation_msg}'")
+
+                send_tracking_data(
+                    containerNum,
+                    orderNumber,
+                    None,
+                    None,
+                    workstation_msg,
+                    loggedEmployee.employeeName,
+                    itemNum=itemNum,
+                    prodType=prodType
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to send {f[1]}: {e}")
+
+    # --- Clear lists & GUI ---
     pdf_files.clear()
     file_listbox.delete(0,'end')
     update_confirm_state()
@@ -289,35 +345,6 @@ def create_printing_menu(loggedEmployee):
     file_listbox.pack(side="left", fill="both", expand=True, padx=(2,0), pady=2)
     file_scrollbar.pack(side="right", fill="y", padx=(0,2), pady=2)
 
-    # ---------------- Settings Cog Button ----------------
-    try:
-        cog_img_path = resource_path("images/settingsCog.png")
-        cog_img = Image.open(cog_img_path)
-
-        # Button size relative to window size
-        cog_btn_size = int(window_size * 0.075)  # same scaling as standardAlly
-        cog_img_size = int(cog_btn_size * 0.75)
-        cog_img = cog_img.resize((cog_img_size, cog_img_size), Image.Resampling.LANCZOS)
-        cog_photo = ImageTk.PhotoImage(cog_img)
-
-        settings_btn = ttk.Button(
-            root,
-            image=cog_photo,
-            style="Purple.TButton",
-            command=lambda: show_time_popup(root, loggedEmployee.employeeName)
-        )
-        settings_btn.image = cog_photo  # keep reference
-        settings_btn.place(
-            relx=0.875,  # top-right corner
-            rely=0.04,
-            anchor="ne",
-            width=cog_btn_size,
-            height=cog_btn_size
-        )
-    except Exception as e:
-        print("Error loading settings cog:", e)
-
-
     # ---------------- Drop Handler ----------------
     def update_confirm_state():
         confirm_button.state(['!disabled'] if pdf_files else ['disabled'])
@@ -325,28 +352,48 @@ def create_printing_menu(loggedEmployee):
     def drop(event):
         files = root.splitlist(event.data)
         for f in files:
-            if f.lower().endswith(".pdf") and all(not (isinstance(p, PDFFile) and p.path==f) for p in pdf_files):
-                pdf_obj = PDFFile(f)
-                pdf_files.append(pdf_obj)
-                file_listbox.insert("end", pdf_obj.filename)
-            elif f.lower().endswith(".jpg"):
-                filename = os.path.basename(f)
-                match = re.search(r"po00(\d+)_li", filename)
+            filename = os.path.basename(f).lower()
+
+            # --- PDF handling ---
+            if filename.endswith(".pdf") and all(not (isinstance(p, PDFFile) and p.path == f) for p in pdf_files):
+                # PDFs treated like images (based on filename pattern)
+                match = re.search(r"po00(\d+)_li(\d+)_?", filename)
                 if match:
                     order_number = match.group(1)
+                    item_number = int(match.group(2).lstrip("0") or "0")  # extract trailing _li00001_ → 1
                     prefix = filename.split("_")[0]
-                    jpg_entry = [prefix, order_number]
-                    pdf_files.append(jpg_entry)
-                    file_listbox.insert("end", f"{order_number} : {prefix}")
+                    pdf_as_image_entry = [prefix, order_number, item_number]
+                    pdf_files.append(pdf_as_image_entry)
+                    file_listbox.insert("end", f"{order_number} : {prefix} : Item {item_number}")
+                else:
+                    # Standard PDF order sheets (no image-like pattern)
+                    pdf_obj = PDFFile(f)
+                    pdf_files.append(pdf_obj)
+                    file_listbox.insert("end", os.path.basename(f))
+
+            # --- JPEG/PNG handling ---
+            elif filename.endswith((".jpg", ".png")):
+                match = re.search(r"po00(\d+)_li(\d+)_?", filename)
+                if match:
+                    order_number = match.group(1)
+                    item_number = int(match.group(2).lstrip("0") or "0")
+                    prefix = filename.split("_")[0]
+                    image_entry = [prefix, order_number, item_number]
+                    pdf_files.append(image_entry)
+                    file_listbox.insert("end", f"{order_number} : {prefix} : Item {item_number}")
+
+
         update_confirm_state()
+
 
     drop_frame.drop_target_register(DND_FILES)
     drop_frame.dnd_bind("<<Drop>>", drop)
 
     # ---------------- Buttons ----------------
     # ---------------- Buttons ----------------
-    mode_selector = ModeSelector(root, pdf_files, file_listbox, update_confirm_state, loggedEmployee)
-    mode_selector.place(relx=0.49, rely=0.19, anchor="center")
+    mode_selector = ModeSelector(root, pdf_files, file_listbox, update_confirm_state, loggedEmployee, drop_frame)
+    mode_selector.place(relx=0.5, rely=0.19, anchor="center")
+
     
     style.configure("Green.TButton", background="#28A745", foreground="white")
     style.map("Green.TButton", background=[('active','#34D058')], foreground=[('disabled','gray')])
@@ -369,6 +416,53 @@ def create_printing_menu(loggedEmployee):
     logout_button = ttk.Button(root, text="Logout", style="Purple.TButton",
                                command=lambda: [loggedOut(loggedEmployee.employeeName, server_ip="192.168.111.230", port=8080), root.destroy()])
     logout_button.place(relx=0.48, rely=0.88, anchor="center", relwidth=0.15, relheight=0.04)
+
+    # ---------------- Settings Cog Button ----------------
+    try:
+        cog_img_path = resource_path("images/settingsCog.png")
+        cog_img = Image.open(cog_img_path)
+
+        # Fixed size for the cog button
+        cog_btn_size = int(window_size * 0.05)  # adjust as needed
+        cog_img_size = int(cog_btn_size * 0.75)
+        cog_img = cog_img.resize((cog_img_size, cog_img_size), Image.Resampling.LANCZOS)
+        cog_photo = ImageTk.PhotoImage(cog_img)
+
+        style = ttk.Style()
+        style.theme_use('clam')
+        # Cream-colored button style
+        style.configure(
+            "Cream.TButton",
+            background="#E6E1D6",  # same as ModeSelector
+            foreground="black",
+            font=("Arial", 10, "bold"),
+            padding=5
+        )
+        style.map(
+            "Cream.TButton",
+            background=[('active', '#DCD6C5')],  # slightly darker on hover
+            foreground=[('disabled', 'gray')]
+        )
+
+        settings_btn = ttk.Button(
+            root,
+            image=cog_photo,
+            style="Cream.TButton",
+            command=lambda: show_time_popup(root, loggedEmployee.employeeName)
+        )
+        settings_btn.image = cog_photo  # keep reference
+
+        # Absolute placement — put it wherever you want
+        settings_btn.place(
+            x=int(window_size * 0.82),  # adjust horizontal position
+            y=int(window_size * 0.165),  # adjust vertical position
+            width=cog_btn_size,
+            height=cog_btn_size
+        )
+
+    except Exception as e:
+        print("Error loading settings cog:", e)
+
 
     # ---------------- Dynamic Button Font Resizing ----------------
     import tkinter.font as tkFont
