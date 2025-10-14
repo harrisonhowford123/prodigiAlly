@@ -25,7 +25,7 @@ def open_and_subtle_sharpen_image(path, size):
     img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=80, threshold=1))
     return img
 
-def show_already_logged_in_popup(root):
+def show_already_logged_in_popup(root, employee, continue_login_callback):
     popup = Toplevel(root)
     popup.title("Already Logged In")
     popup.transient(root)
@@ -68,8 +68,19 @@ def show_already_logged_in_popup(root):
     style.map("Popup.TButton", background=[('active', '#8B1CFF')],
               foreground=[('disabled', 'gray')])
 
+    style.configure("Printer.TButton", background="#FF4C4C", foreground="white",
+                    font=("Arial", 10, "bold"), padding=5)
+    style.map("Printer.TButton", background=[('active', '#FF1C1C')], foreground=[('disabled', 'gray')])
+
+    def printer_override():
+        popup.destroy()
+        continue_login_callback(employee)
+
+    ttk.Button(popup, text="Printer Override", command=printer_override, style="Printer.TButton").place(
+        relx=0.3, rely=0.85, anchor="center"
+    )
     ttk.Button(popup, text="OK", command=popup.destroy, style="Popup.TButton").place(
-        relx=0.5, rely=0.85, anchor="center"
+        relx=0.7, rely=0.85, anchor="center"
     )
 
     if IS_WINDOWS:
@@ -142,11 +153,6 @@ def create_main_menu():
     root.resizable(False, False)
 
     def on_close():
-        try:
-            if p.is_alive():
-                p.terminate()
-        except Exception:
-            pass
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
@@ -180,10 +186,10 @@ def create_main_menu():
                     foreground='black', padding=0)
     style.map('Custom.TCombobox',
               arrowcolor=[('!disabled', 'white')],
-              fieldbackground=[('readonly', '#E6E1D6')],
-              background=[('readonly', '#E6E1D6')],
-              selectbackground=[('readonly', '#E6E1D6')],
-              selectforeground=[('readonly', 'black')])
+              fieldbackground=[('readonly', '#E6E1D6'), ('!readonly', '#E6E1D6')],
+              background=[('readonly', '#E6E1D6'), ('!readonly', '#E6E1D6')],
+              selectbackground=[('readonly', '#E6E1D6'), ('!readonly', '#E6E1D6')],
+              selectforeground=[('readonly', 'black'), ('!readonly', 'black')])
 
     style.configure('Custom.TEntry', fieldbackground='#E6E1D6', foreground='black', padding=0)
 
@@ -197,14 +203,32 @@ def create_main_menu():
     root.option_add('*TCombobox*Listbox*Font', ('Arial', 10))
 
     # ---------------- Combobox & Entry ----------------
+    all_employee_names = []  # Store full list for filtering
+    
     combo1 = ttk.Combobox(root, values=[], style='Custom.TCombobox',
-                          height=8, state='readonly')  # max 8 visible
+                          height=8, state='normal')  # Changed to 'normal' to allow typing
     combo1.place(relx=0.42, rely=0.45, anchor="center", relwidth=0.35, relheight=0.03)
-    combo1.bind("<Button-1>", lambda e: combo1.event_generate('<Down>'))
+    
+    def filter_combobox(event=None):
+        typed = combo1.get().lower()
+        if typed == '':
+            filtered = all_employee_names
+        else:
+            filtered = [name for name in all_employee_names if typed in name.lower()]
+        combo1['values'] = filtered
+        combo1['height'] = min(8, max(1, len(filtered)))
+    
+    def combo_enter_pressed(event):
+        # Open dropdown when pressing Enter in combobox
+        combo1.event_generate('<Down>')
+    
+    combo1.bind('<KeyRelease>', filter_combobox)
     combo1.bind("<<ComboboxSelected>>", lambda e: combo1.selection_clear())
+    combo1.bind("<Return>", combo_enter_pressed)
 
     entry1 = ttk.Entry(root, style='Custom.TEntry')
     entry1.place(relx=0.42, rely=0.54, anchor="center", relwidth=0.35, relheight=0.03)
+    entry1.bind("<Return>", lambda e: confirm_password())
 
     # ---------------- Fetch Employees Thread ----------------
     employees = []
@@ -227,6 +251,8 @@ def create_main_menu():
             root.after(200, delayed_error)  # ensure UI is ready
 
         def update_combo():
+            nonlocal all_employee_names
+            all_employee_names = employee_names
             combo1['values'] = employee_names
             combo1['height'] = min(8, len(employee_names))
 
@@ -252,23 +278,26 @@ def create_main_menu():
             print("Incorrect password")
             return
 
-        # --- ✅ New step: Check if already logged in ---
+        # --- Check if already logged in ---
         state_response = get_employee_login_state(selected_name)
 
+        def proceed_to_login(emp):
+            selected_employee[0] = emp
+            root.destroy()
+
         if state_response.get("status") == "success" and state_response.get("loggedIn") is True:
-            # Already logged in — reset UI and show warning
+            # Already logged in – reset UI and show warning
             entry1.delete(0, "end")
             combo1.set("")
-            show_already_logged_in_popup(root)
+            show_already_logged_in_popup(root, employee, continue_login_callback=proceed_to_login)
             return
         elif state_response.get("status") != "success":
-            # Network or server problem — fallback to connection error popup
+            # Network or server problem – fallback to connection error popup
             show_connection_error_popup(root)
             return
 
         # --- Proceed to login if not logged in ---
-        selected_employee[0] = employee
-        root.destroy()
+        proceed_to_login(employee)
 
     confirm_button = ttk.Button(root, text="Login", style="Purple.TButton", command=confirm_password)
     confirm_button.place(relx=0.325, rely=0.61, anchor="center", relwidth=0.16, relheight=0.035)

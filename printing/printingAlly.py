@@ -87,7 +87,6 @@ def show_batch_moved_popup(root):
     popup.wait_window()
 
 # ---------------- Mode Selector ----------------
-# ---------------- Mode Selector (Fixed + Taller + Width matches drop box) ----------------
 class ModeSelector(Frame):
     def __init__(self, master, pdf_files, file_listbox, update_confirm_state, loggedEmployee, drop_frame, **kwargs):
         super().__init__(master, bg="#E6E1D6", bd=1, relief="solid", **kwargs)
@@ -256,53 +255,66 @@ def show_time_popup(root, employee_name):
 
 # ---------------- Batch Processing ----------------
 def process_for_database(pdf_files, file_listbox, loggedEmployee, update_confirm_state, root):
+
     # --- PDFs (standard PDFFile objects) ---
     for file_obj in pdf_files:
         if isinstance(file_obj, PDFFile):
-            orders, leads, isos = extract_pdf_info(file_obj.path)
-            for i in range(len(orders)):
-                for iso in isos[i]:
-                    send_tracking_data(
-                        None,
-                        orders[i],
-                        leads[i],
-                        iso,
-                        "Printer Station: Oneflow Order Forms Printed",
-                        loggedEmployee.employeeName
-                    )
-
+            print(f"[DEBUG] Analyzing PDF: {os.path.basename(file_obj.path)}")
+            try:
+                orders, leads, isos, quantities = extract_pdf_info(file_obj.path)
+                print("Quantity:", quantities)
+                print(orders)
+                print(isos)
+                print(leads)
+                
+                # --- Send each ISO barcode ---
+                for i in range(len(orders)):
+                    for iso_idx, iso in enumerate(isos[i]):
+                        qty = quantities[i][iso_idx]
+                        
+                        # Send ISO multiple times based on quantity
+                        for q_num in range(1, qty + 1):
+                            # First one gets no suffix, subsequent ones get _2, _3, etc.
+                            iso_with_suffix = iso if q_num == 1 else f"{iso}_{q_num}"
+                            
+                            print(f"  [SEND DEBUG] Sending → Order: {orders[i]}, Lead: {leads[i]}, ISO: {iso_with_suffix}")
+                            send_tracking_data(
+                                None,
+                                orders[i],
+                                leads[i],
+                                iso_with_suffix,
+                                "Printer Station: Oneflow Order Forms Printed",
+                                loggedEmployee.employeeName,
+                                itemNum=None,
+                                prodType=None
+                            )
+                        
+            except Exception as e:
+                print(f"[ERROR] Failed to process PDF {file_obj.path}: {e}")
+                
     # --- JPEG/PNG and PDFs treated like images ---
     jpg_files = [f for f in pdf_files if isinstance(f, list)]
     if jpg_files:
         containerNum = fetch_next_container_id()
         for f in jpg_files:
             try:
-                itemNum = f[2] if len(f) > 2 else None
-                prodType = f[0]
-                orderNumber = f[1]
-                workstation_msg = f"Printer Station: Sent {orderNumber} To Printer"
-
-                # 🔍 DEBUG PRINT
-                print(f"[DEBUG] Sending tracking data → "
-                      f"containerID={containerNum}, "
-                      f"orderNumber={orderNumber}, "
-                      f"itemNum={itemNum}, "
-                      f"prodType={prodType}, "
-                      f"employee={loggedEmployee.employeeName}, "
-                      f"workstation='{workstation_msg}'")
+                order_number = f[1]  # extract from the list
+                workstation_msg = f"Printer Station: Sent {order_number} To Printer"
 
                 send_tracking_data(
-                    containerNum,
-                    orderNumber,
-                    None,
-                    None,
-                    workstation_msg,
-                    loggedEmployee.employeeName,
-                    itemNum=itemNum,
-                    prodType=prodType
+                    containerID=containerNum,
+                    orderNumber=order_number,
+                    leadBarcode=None,
+                    isoBarcode=None,
+                    workstation=workstation_msg,
+                    employeeName=loggedEmployee.employeeName,
+                    itemNum=f[2] if len(f) > 2 else None,
+                    prodType=f[0]
                 )
+
             except Exception as e:
                 print(f"[ERROR] Failed to send {f[1]}: {e}")
+
 
     # --- Clear lists & GUI ---
     pdf_files.clear()
@@ -417,13 +429,72 @@ def create_printing_menu(loggedEmployee):
                                command=lambda: [loggedOut(loggedEmployee.employeeName, server_ip="192.168.111.230", port=8080), root.destroy()])
     logout_button.place(relx=0.48, rely=0.88, anchor="center", relwidth=0.15, relheight=0.04)
 
+    # ---------------- Floating Controls Window ----------------
+    floating_window = None
+
+    def open_floating_controls():
+        nonlocal floating_window
+        if floating_window and floating_window.winfo_exists():
+            floating_window.lift()
+            return
+        
+        floating_window = Toplevel(root)
+        floating_window.title("Controls")
+        floating_window.resizable(False, False)
+        floating_window.configure(bg="#E6E1D6")
+        
+        # Small window size
+        float_width = 200
+        float_height = 150
+        
+        # Position near the main window
+        x = root.winfo_x() + 50
+        y = root.winfo_y() + 50
+        floating_window.geometry(f"{float_width}x{float_height}+{x}+{y}")
+        
+        # Create identical buttons
+        float_confirm = ttk.Button(
+            floating_window, 
+            text="Submit", 
+            style="Green.TButton",
+            command=lambda: process_for_database(pdf_files, file_listbox, loggedEmployee, update_confirm_state, root)
+        )
+        float_confirm.place(relx=0.5, rely=0.25, anchor="center", relwidth=0.8, relheight=0.2)
+        
+        float_empty = ttk.Button(
+            floating_window, 
+            text="Empty", 
+            style="Red.TButton",
+            command=lambda: [pdf_files.clear(), file_listbox.delete(0,'end'), update_confirm_state()]
+        )
+        float_empty.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.8, relheight=0.2)
+        
+        float_logout = ttk.Button(
+            floating_window, 
+            text="Logout", 
+            style="Purple.TButton",
+            command=lambda: [loggedOut(loggedEmployee.employeeName, server_ip="192.168.111.230", port=8080), root.destroy()]
+        )
+        float_logout.place(relx=0.5, rely=0.75, anchor="center", relwidth=0.8, relheight=0.2)
+        
+        # Sync button states
+        def sync_states():
+            if floating_window and floating_window.winfo_exists():
+                if str(confirm_button.state()) == "('disabled',)":
+                    float_confirm.state(['disabled'])
+                else:
+                    float_confirm.state(['!disabled'])
+                floating_window.after(100, sync_states)
+        
+        sync_states()
+
     # ---------------- Settings Cog Button ----------------
     try:
         cog_img_path = resource_path("images/settingsCog.png")
         cog_img = Image.open(cog_img_path)
 
         # Fixed size for the cog button
-        cog_btn_size = int(window_size * 0.05)  # adjust as needed
+        cog_btn_size = int(window_size * 0.05)
         cog_img_size = int(cog_btn_size * 0.75)
         cog_img = cog_img.resize((cog_img_size, cog_img_size), Image.Resampling.LANCZOS)
         cog_photo = ImageTk.PhotoImage(cog_img)
@@ -433,14 +504,14 @@ def create_printing_menu(loggedEmployee):
         # Cream-colored button style
         style.configure(
             "Cream.TButton",
-            background="#E6E1D6",  # same as ModeSelector
+            background="#E6E1D6",
             foreground="black",
             font=("Arial", 10, "bold"),
             padding=5
         )
         style.map(
             "Cream.TButton",
-            background=[('active', '#DCD6C5')],  # slightly darker on hover
+            background=[('active', '#DCD6C5')],
             foreground=[('disabled', 'gray')]
         )
 
@@ -450,18 +521,26 @@ def create_printing_menu(loggedEmployee):
             style="Cream.TButton",
             command=lambda: show_time_popup(root, loggedEmployee.employeeName)
         )
-        settings_btn.image = cog_photo  # keep reference
+        settings_btn.image = cog_photo
 
-        # Absolute placement — put it wherever you want
         settings_btn.place(
-            x=int(window_size * 0.82),  # adjust horizontal position
-            y=int(window_size * 0.165),  # adjust vertical position
+            x=int(window_size * 0.82),
+            y=int(window_size * 0.165),
             width=cog_btn_size,
             height=cog_btn_size
         )
 
     except Exception as e:
         print("Error loading settings cog:", e)
+
+    # ---------------- Float Icon Button ----------------
+    float_icon_btn = ttk.Button(
+        root,
+        text="⇱",
+        style="Cream.TButton",
+        command=open_floating_controls
+    )
+    float_icon_btn.place(relx=0.31, rely=0.88, anchor="center", relwidth=0.04, relheight=0.04)
 
 
     # ---------------- Dynamic Button Font Resizing ----------------

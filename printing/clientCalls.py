@@ -252,8 +252,7 @@ def get_facility_workstations(server_ip=TARGET_IP, port=8080):
 
 
 def send_tracking_data(containerID, orderNumber, leadBarcode, isoBarcode, workstation, employeeName,
-                       server_ip=TARGET_IP, port=8080):
-
+                       itemNum, prodType, server_ip=TARGET_IP, port=8080):
     base_url = f"http://{server_ip}:{port}"
     params = {
         "containerID": containerID,
@@ -261,7 +260,9 @@ def send_tracking_data(containerID, orderNumber, leadBarcode, isoBarcode, workst
         "leadBarcode": leadBarcode,
         "isoBarcode": isoBarcode,
         "workstation": workstation,
-        "employeeName": employeeName
+        "employeeName": employeeName,
+        "itemNum": itemNum,
+        "prodType": prodType
     }
 
     try:
@@ -308,4 +309,3 @@ def fetch_facility_workstations(server_ip=TARGET_IP, port=8080):
     except requests.RequestException as e:
         print(f"Request failed: {e}")
         return [], [], []
-
