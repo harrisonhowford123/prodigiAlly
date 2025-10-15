@@ -3,10 +3,10 @@ Remote barcode tracking software for windows/mac systems that connects and updat
 
 
 
-UPDATE employee_info
-SET AdminPrivs = json_insert(
-    COALESCE(AdminPrivs, '[]'),
-    '$[' || json_array_length(COALESCE(AdminPrivs, '[]')) || ']',
-    'pulse'
-)
-WHERE employeeName = 'Harry Howford';
+python -m PyInstaller ^
+  --onefile ^
+  --windowed ^
+  --name "Prodigi Ally: Printing Station" ^
+  --icon "MyAppIcon.ico" ^
+  --add-data ".\images;images" ^
+  .\main.py
