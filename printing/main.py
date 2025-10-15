@@ -272,21 +272,21 @@ from printingAlly import create_printing_menu
 from clientCalls import loggedOut
 
 if __name__ == "__main__":
-    # Check for updates before showing login (runs on main thread)
-    print("[UPDATE] Checking for updates...")
-    update_info = check_for_updates()
-    if update_info and update_info['available']:
-        print(f"[UPDATE] Update found: version {update_info['version']}")
-        show_update_notification(update_info)
-    else:
-        print("[UPDATE] No updates available")
-    
     active = True
     while active:
         loggedEmployee = create_main_menu()
         if loggedEmployee is None:
             active = False
         else:
+            # Check for updates after successful login (before printing menu)
+            print("[UPDATE] Checking for updates...")
+            update_info = check_for_updates()
+            if update_info and update_info['available']:
+                print(f"[UPDATE] Update found: version {update_info['version']}")
+                show_update_notification(update_info)
+            else:
+                print("[UPDATE] No updates available")
+            
             # Assume create_printing_menu returns True if user wants to continue, False to exit
             continue_running = create_printing_menu(loggedEmployee)
             if continue_running is False:
