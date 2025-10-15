@@ -262,10 +262,6 @@ def process_for_database(pdf_files, file_listbox, loggedEmployee, update_confirm
             print(f"[DEBUG] Analyzing PDF: {os.path.basename(file_obj.path)}")
             try:
                 orders, leads, isos, quantities = extract_pdf_info(file_obj.path)
-                print("Quantity:", quantities)
-                print(orders)
-                print(isos)
-                print(leads)
                 
                 # --- Send each ISO barcode ---
                 for i in range(len(orders)):
@@ -277,7 +273,6 @@ def process_for_database(pdf_files, file_listbox, loggedEmployee, update_confirm
                             # First one gets no suffix, subsequent ones get _2, _3, etc.
                             iso_with_suffix = iso if q_num == 1 else f"{iso}_{q_num}"
                             
-                            print(f"  [SEND DEBUG] Sending → Order: {orders[i]}, Lead: {leads[i]}, ISO: {iso_with_suffix}")
                             send_tracking_data(
                                 None,
                                 orders[i],
