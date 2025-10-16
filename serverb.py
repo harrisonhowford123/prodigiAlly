@@ -60,6 +60,14 @@ def init_main_db():
                 Processes TEXT
             )
         """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS product_codes (
+                prod_type TEXT PRIMARY KEY
+            )
+
+        """)
+
         
         conn.commit()
 
@@ -409,36 +417,23 @@ class SimpleHandler(BaseHTTPRequestHandler):
             return
 
         elif parsed_path.path == "/api/fetchProdCodes":
-            debug_log("[GET] Fetching all product codes from employee_info")
+            debug_log("[GET] Fetching product codes")
             try:
                 with db_lock_main:
                     conn = sqlite3.connect(MAIN_DB_FILE)
                     cursor = conn.cursor()
-                    cursor.execute("SELECT prod_codes FROM employee_info")
+                    cursor.execute("SELECT prod_type FROM product_codes")
                     rows = cursor.fetchall()
                     conn.close()
 
-                # Flatten all non-empty entries
-                prod_codes = []
-                for r in rows:
-                    entry = r[0]
-                    if entry:
-                        try:
-                            # Assuming prod_codes column is stored as JSON array
-                            codes = json.loads(entry)
-                            if isinstance(codes, list):
-                                prod_codes.extend(codes)
-                        except json.JSONDecodeError:
-                            # If not JSON, treat as single string
-                            prod_codes.append(str(entry))
-
+                prod_codes = [r[0] for r in rows]
                 response = {"status": "success", "prodCodes": prod_codes}
+
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode("utf-8"))
-                return
 
             except Exception as e:
                 debug_log(f"[GET] ERROR in fetchProdCodes: {e}")
@@ -447,7 +442,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
-                return
+            return
 
         else:
             debug_log(f"[GET] 404 - Unknown path: '{parsed_path.path}'")
