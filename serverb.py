@@ -63,9 +63,9 @@ def init_main_db():
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS product_codes (
-                prod_type TEXT PRIMARY KEY
+                prod_type TEXT PRIMARY KEY,
+                worksheetRef TEXT
             )
-
         """)
 
         
@@ -274,6 +274,28 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
                 # --- ISO barcode branch ---
                 if isoBarcode:
+                    # --- After ISO update/insert in tracking_data ---
+                    if isoBarcode and prodType:  # only if ISO is present and prodType provided
+                        try:
+                            with db_lock_main:  # thread-safe main DB access
+                                conn_main = sqlite3.connect(MAIN_DB_FILE)
+                                cursor_main = conn_main.cursor()
+                                # Check if prodType exists in any worksheetRef
+                                cursor_main.execute("SELECT 1 FROM product_codes WHERE worksheetRef = ?", (prodType,))
+                                exists = cursor_main.fetchone()
+                                conn_main.close()
+
+                            if not exists:
+                                # prodType not found → log to file with OrderSheetLostCodes prefix
+                                try:
+                                    with open("LostProductCodes.txt", "a", encoding="utf-8") as f:
+                                        f.write(f"OrderSheetLostCodes: {prodType}\n")
+                                except Exception as e:
+                                    debug_log(f"[QUEUE] Failed to write lost order sheet code '{prodType}' to file: {e}")
+
+                        except Exception as e:
+                            debug_log(f"[QUEUE] Error checking prodType '{prodType}' in worksheetRef column: {e}")
+
                     # Check if ISO already exists
                     cursor.execute(
                         "SELECT containerID, orderNumber, leadBarcode, history FROM tracking_data WHERE isoBarcode = ?",
@@ -364,12 +386,31 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             SET containerID = ?, itemNum = ?, prodType = ?, history = ?
                             WHERE orderNumber = ? AND isoBarcode = ? AND leadBarcode = ?
                         """, (container_to_update, itemNum, prodType, updated_history, orderNumber, iso_existing, lead_existing))
+                        
                     else:
                         # No matching row → insert new row
                         cursor.execute("""
                             INSERT INTO tracking_data (containerID, orderNumber, itemNum, prodType, history)
                             VALUES (?, ?, ?, ?, ?)
                         """, (containerID, orderNumber, itemNum, prodType, new_history_entry))
+
+                    # --- After update or insert in tracking_data ---
+                    # Check if prodType exists in product_codes table
+                    if prodType:  # only if a prodType was submitted
+                        with db_lock_main:  # make sure main DB access is thread-safe
+                            conn_main = sqlite3.connect(MAIN_DB_FILE)
+                            cursor_main = conn_main.cursor()
+                            cursor_main.execute("SELECT 1 FROM product_codes WHERE prod_type = ?", (prodType,))
+                            exists = cursor_main.fetchone()
+                            conn_main.close()
+
+                        if not exists:
+                            # prodType not found → log to file
+                            try:
+                                with open("LostProductCodes.txt", "a", encoding="utf-8") as f:
+                                    f.write(f"Image submission: {prodType}\n")
+                            except Exception as e:
+                                debug_log(f"[QUEUE] Failed to write lost product code '{prodType}' to file: {e}")
 
             self.enqueue_tracking_job(job)
             return
