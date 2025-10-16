@@ -438,6 +438,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode("utf-8"))
+                return
 
             except Exception as e:
                 debug_log(f"[GET] ERROR in fetchProdCodes: {e}")
@@ -446,7 +447,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
-
+                return
 
         else:
             debug_log(f"[GET] 404 - Unknown path: '{parsed_path.path}'")
