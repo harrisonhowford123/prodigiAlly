@@ -22,7 +22,7 @@ db_lock_main = Lock()
 tracking_queue = Queue()
 
 # Debug flag - set to True for verbose logging
-DEBUG = False
+DEBUG = True
 
 def debug_log(message):
     if DEBUG:
@@ -429,20 +429,11 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 prod_codes = [r[0] for r in rows]
                 response = {"status": "success", "prodCodes": prod_codes}
 
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps(response).encode("utf-8"))
+                debug_log(f"[GET] Returning {len(prod_codes)} product codes")
 
             except Exception as e:
                 debug_log(f"[GET] ERROR in fetchProdCodes: {e}")
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
-            return
+                response = {"status": "error", "message": str(e)}
 
         else:
             debug_log(f"[GET] 404 - Unknown path: '{parsed_path.path}'")
