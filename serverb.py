@@ -22,7 +22,7 @@ db_lock_main = Lock()
 tracking_queue = Queue()
 
 # Debug flag - set to True for verbose logging
-DEBUG = True
+DEBUG = False
 
 def debug_log(message):
     if DEBUG:
@@ -372,7 +372,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 # --- Order number only branch ---
                 if not isoBarcode and not leadBarcode and orderNumber:
                     prodType_normalized = False
-                    normalized_prodType = prodType
+                    normalized_prodType = prodType  # start with original submission
 
                     # Normalize prodType if present
                     if prodType:
@@ -384,19 +384,29 @@ class SimpleHandler(BaseHTTPRequestHandler):
                                     (prodType,)
                                 )
                                 result = cursor_main.fetchone()
-                                if result:
+
+                                if result and result[0] is not None:
                                     normalized_prodType = result[0]
                                     prodType_normalized = True
                                 else:
                                     normalized_prodType = None
+                                    prodType_normalized = False
+                                    write_to_file(prodType)  # log original submission
+
                         except Exception as e:
                             debug_log(f"[QUEUE] Error checking prodType '{prodType}' in product_codes: {e}")
+                            normalized_prodType = None
+                            prodType_normalized = False
+                            write_to_file(prodType)  # optional: also log if DB check fails
 
                         if not prodType_normalized:
                             log_missing_prodType(prodType, prefix="Image submission")
 
+                    # Determine which value to use in the DB
+                    prodType_to_store = normalized_prodType if prodType_normalized else prodType
+
+                    # Try to find existing row in tracking_data
                     if prodType_normalized:
-                        # Match orderNumber + normalized prodType where containerID IS NULL
                         cursor.execute("""
                             SELECT rowid, containerID, itemNum, history
                             FROM tracking_data
@@ -404,7 +414,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             LIMIT 1
                         """, (orderNumber, normalized_prodType))
                     else:
-                        # Match any row with orderNumber where containerID IS NULL
                         cursor.execute("""
                             SELECT rowid, containerID, itemNum, prodType, history
                             FROM tracking_data
@@ -423,9 +432,9 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         updated_history = append_history(history_existing, new_history_entry)
 
                         if prodType_normalized:
-                            params = (container_to_use, itemNum, updated_history, normalized_prodType, rowid_existing)
+                            params = (container_to_use, itemNum_existing, updated_history, normalized_prodType, rowid_existing)
                         else:
-                            params = (container_to_use, itemNum, updated_history, rowid_existing)
+                            params = (container_to_use, itemNum_existing, updated_history, rowid_existing)
 
                         cursor.execute("""
                             UPDATE tracking_data
@@ -434,10 +443,12 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             WHERE rowid = ?
                         """.format(prodType_update=", prodType = ?" if prodType_normalized else ""), params)
                     else:
+                        # Insert new row
                         cursor.execute("""
                             INSERT INTO tracking_data (containerID, orderNumber, itemNum, prodType, history)
                             VALUES (?, ?, ?, ?, ?)
-                        """, (containerID, orderNumber, itemNum, normalized_prodType, new_history_entry))
+                        """, (containerID, orderNumber, itemNum, prodType_to_store, new_history_entry))
+
 
             self.enqueue_tracking_job(job)
             return
