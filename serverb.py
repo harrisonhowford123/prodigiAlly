@@ -248,7 +248,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 if not prodType:
                     return
                 try:
-                    # Read existing lines to avoid duplicates
                     existing_lines = set()
                     try:
                         with open("LostProductCodes.txt", "r", encoding="utf-8") as f:
@@ -292,29 +291,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
                 # --- ISO barcode branch ---
                 if isoBarcode:
-                    prodType_exists_in_codes = False
-                    normalized_prodType = prodType  # default
-
-                    # Check prodType in product_codes
-                    if prodType:
-                        try:
-                            with db_lock_main, sqlite3.connect(MAIN_DB_FILE) as conn_main:
-                                cursor_main = conn_main.cursor()
-                                cursor_main.execute(
-                                    "SELECT worksheetRef FROM product_codes WHERE worksheetRef = ?",
-                                    (prodType,)
-                                )
-                                result = cursor_main.fetchone()
-                                if result:
-                                    normalized_prodType = result[0]
-                                    prodType_exists_in_codes = True
-                        except Exception as e:
-                            debug_log(f"[QUEUE] Error checking prodType '{prodType}' in product_codes: {e}")
-
-                        if not prodType_exists_in_codes:
-                            log_missing_prodType(prodType, prefix="OrderSheetLostCodes")
-
-                    # Check if ISO exists
+                    # Write whatever prodType is provided; no normalization check
                     cursor.execute(
                         "SELECT containerID, orderNumber, leadBarcode, history FROM tracking_data WHERE isoBarcode = ?",
                         (isoBarcode,)
@@ -322,39 +299,35 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     row = cursor.fetchone()
 
                     if row:
-                        # Update existing ISO row
+                        # ISO exists → update
                         container_existing, orderNumber_existing, lead_existing, history_existing = row
                         container_to_use = containerID if containerID is not None else container_existing
                         order_to_use = orderNumber if orderNumber else orderNumber_existing
                         lead_to_use = leadBarcode if leadBarcode else lead_existing
                         updated_history = append_history(history_existing, new_history_entry)
 
-                        prodType_to_use = normalized_prodType if prodType_exists_in_codes else row[3]
-
                         cursor.execute("""
                             UPDATE tracking_data
                             SET history = ?, containerID = ?, orderNumber = ?, leadBarcode = ?, itemNum = ?, prodType = ?
                             WHERE isoBarcode = ?
-                        """, (updated_history, container_to_use, order_to_use, lead_to_use, itemNum, prodType_to_use, isoBarcode))
-
+                        """, (updated_history, container_to_use, order_to_use, lead_to_use, itemNum, prodType, isoBarcode))
                     else:
-                        # ISO not found → strict match if normalized
+                        # ISO not found → try to match orderNumber + prodType first, then fallback, then insert
                         row = None
-                        if prodType_exists_in_codes:
+                        if prodType:
                             cursor.execute("""
                                 SELECT containerID, leadBarcode, history
                                 FROM tracking_data
                                 WHERE orderNumber = ? AND prodType = ? AND isoBarcode IS NULL
                                 LIMIT 1
-                            """, (orderNumber, normalized_prodType))
+                            """, (orderNumber, prodType))
                             row = cursor.fetchone()
 
                         if not row:
-                            # fallback: match placeholder with prodType NULL
                             cursor.execute("""
                                 SELECT containerID, leadBarcode, history
                                 FROM tracking_data
-                                WHERE orderNumber = ? AND isoBarcode IS NULL AND prodType IS NULL
+                                WHERE orderNumber = ? AND isoBarcode IS NULL
                                 LIMIT 1
                             """, (orderNumber,))
                             row = cursor.fetchone()
@@ -365,28 +338,20 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             lead_to_use = leadBarcode if leadBarcode else lead_existing
                             updated_history = append_history(history_existing, new_history_entry)
 
-                            if prodType_exists_in_codes:
-                                params = (container_to_use, lead_to_use, isoBarcode, updated_history, itemNum,
-                                          normalized_prodType, orderNumber, normalized_prodType)
-                            else:
-                                params = (container_to_use, lead_to_use, isoBarcode, updated_history, itemNum,
-                                          None, orderNumber)
-
                             cursor.execute("""
                                 UPDATE tracking_data
                                 SET containerID = ?, leadBarcode = ?, isoBarcode = ?, history = ?, itemNum = ?, prodType = ?
                                 WHERE rowid = (
                                     SELECT rowid FROM tracking_data
                                     WHERE orderNumber = ? AND isoBarcode IS NULL
-                                    {prodType_filter}
                                     LIMIT 1
                                 )
-                            """.replace("{prodType_filter}", "AND prodType = ?" if prodType_exists_in_codes else "AND prodType IS NULL"), params)
+                            """, (container_to_use, lead_to_use, isoBarcode, updated_history, itemNum, prodType, orderNumber))
                         else:
                             cursor.execute("""
                                 INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, history, itemNum, prodType)
                                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """, (containerID, orderNumber, leadBarcode, isoBarcode, new_history_entry, itemNum, normalized_prodType))
+                            """, (containerID, orderNumber, leadBarcode, isoBarcode, new_history_entry, itemNum, prodType))
 
                 # --- Lead barcode branch ---
                 if leadBarcode:
@@ -409,6 +374,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     prodType_normalized = False
                     normalized_prodType = prodType
 
+                    # Normalize prodType if present
                     if prodType:
                         try:
                             with db_lock_main, sqlite3.connect(MAIN_DB_FILE) as conn_main:
@@ -430,17 +396,19 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             log_missing_prodType(prodType, prefix="Image submission")
 
                     if prodType_normalized:
+                        # Match orderNumber + normalized prodType where containerID IS NULL
                         cursor.execute("""
                             SELECT rowid, containerID, itemNum, history
                             FROM tracking_data
-                            WHERE orderNumber = ? AND itemNum IS NULL AND prodType = ?
+                            WHERE orderNumber = ? AND prodType = ? AND containerID IS NULL
                             LIMIT 1
                         """, (orderNumber, normalized_prodType))
                     else:
+                        # Match any row with orderNumber where containerID IS NULL
                         cursor.execute("""
                             SELECT rowid, containerID, itemNum, prodType, history
                             FROM tracking_data
-                            WHERE orderNumber = ? AND itemNum IS NULL
+                            WHERE orderNumber = ? AND containerID IS NULL
                             LIMIT 1
                         """, (orderNumber,))
 
@@ -450,11 +418,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         rowid_existing = row[0]
                         container_existing = row[1]
                         itemNum_existing = row[2]
-                        if prodType_normalized:
-                            history_existing = row[3]
-                        else:
-                            history_existing = row[4] if len(row) > 4 else ""
-
+                        history_existing = row[3] if prodType_normalized else row[4] if len(row) > 4 else ""
                         container_to_use = containerID if containerID is not None else container_existing
                         updated_history = append_history(history_existing, new_history_entry)
 
@@ -477,7 +441,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
             self.enqueue_tracking_job(job)
             return
-
 
 
         elif parsed_path.path == "/api/moveContainer":
