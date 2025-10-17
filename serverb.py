@@ -372,9 +372,9 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 # --- Order number only branch ---
                 if not isoBarcode and not leadBarcode and orderNumber:
                     prodType_normalized = False
-                    normalized_prodType = prodType  # start with original submission
+                    normalized_prodType = None  # start as None
 
-                    # Normalize prodType if present
+                    # Attempt to normalize prodType if present
                     if prodType:
                         try:
                             with db_lock_main, sqlite3.connect(MAIN_DB_FILE) as conn_main:
@@ -389,65 +389,72 @@ class SimpleHandler(BaseHTTPRequestHandler):
                                     normalized_prodType = result[0]
                                     prodType_normalized = True
                                 else:
-                                    normalized_prodType = None
+                                    # normalization failed: write original prodType to file
                                     prodType_normalized = False
-                                    write_to_file(prodType)  # log original submission
+                                    write_to_file(prodType)
 
                         except Exception as e:
                             debug_log(f"[QUEUE] Error checking prodType '{prodType}' in product_codes: {e}")
-                            normalized_prodType = None
                             prodType_normalized = False
-                            write_to_file(prodType)  # optional: also log if DB check fails
+                            write_to_file(prodType)
 
                         if not prodType_normalized:
                             log_missing_prodType(prodType, prefix="Image submission")
 
-                    # Determine which value to use in the DB
-                    prodType_to_store = normalized_prodType if prodType_normalized else prodType
+                    # Determine value to store in DB
+                    prodType_to_store = normalized_prodType if prodType_normalized else None
 
-                    # Try to find existing row in tracking_data
-                    if prodType_normalized:
-                        cursor.execute("""
-                            SELECT rowid, containerID, itemNum, history
-                            FROM tracking_data
-                            WHERE orderNumber = ? AND prodType = ? AND containerID IS NULL
-                            LIMIT 1
-                        """, (orderNumber, normalized_prodType))
-                    else:
-                        cursor.execute("""
-                            SELECT rowid, containerID, itemNum, prodType, history
-                            FROM tracking_data
-                            WHERE orderNumber = ? AND containerID IS NULL
-                            LIMIT 1
-                        """, (orderNumber,))
+                    # Connect to main tracking DB
+                    with db_lock_main, sqlite3.connect(MAIN_DB_FILE) as conn:
+                        cursor = conn.cursor()
 
-                    row = cursor.fetchone()
-
-                    if row:
-                        rowid_existing = row[0]
-                        container_existing = row[1]
-                        itemNum_existing = row[2]
-                        history_existing = row[3] if prodType_normalized else row[4] if len(row) > 4 else ""
-                        container_to_use = containerID if containerID is not None else container_existing
-                        updated_history = append_history(history_existing, new_history_entry)
-
+                        # Try to find existing row
                         if prodType_normalized:
-                            params = (container_to_use, itemNum_existing, updated_history, normalized_prodType, rowid_existing)
+                            cursor.execute("""
+                                SELECT rowid, containerID, itemNum, history
+                                FROM tracking_data
+                                WHERE orderNumber = ? AND prodType = ? AND containerID IS NULL
+                                LIMIT 1
+                            """, (orderNumber, normalized_prodType))
                         else:
-                            params = (container_to_use, itemNum_existing, updated_history, rowid_existing)
+                            cursor.execute("""
+                                SELECT rowid, containerID, itemNum, prodType, history
+                                FROM tracking_data
+                                WHERE orderNumber = ? AND containerID IS NULL
+                                LIMIT 1
+                            """, (orderNumber,))
 
-                        cursor.execute("""
-                            UPDATE tracking_data
-                            SET containerID = ?, itemNum = ?, history = ?
-                            {prodType_update}
-                            WHERE rowid = ?
-                        """.format(prodType_update=", prodType = ?" if prodType_normalized else ""), params)
-                    else:
-                        # Insert new row
-                        cursor.execute("""
-                            INSERT INTO tracking_data (containerID, orderNumber, itemNum, prodType, history)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (containerID, orderNumber, itemNum, prodType_to_store, new_history_entry))
+                        row = cursor.fetchone()
+
+                        if row:
+                            # Existing row: update
+                            rowid_existing = row[0]
+                            container_existing = row[1]
+                            itemNum_existing = row[2]
+                            history_existing = row[3] if prodType_normalized else row[4] if len(row) > 4 else ""
+                            container_to_use = containerID if containerID is not None else container_existing
+                            updated_history = append_history(history_existing, new_history_entry)
+
+                            if prodType_normalized:
+                                params = (container_to_use, itemNum_existing, updated_history, normalized_prodType, rowid_existing)
+                            else:
+                                params = (container_to_use, itemNum_existing, updated_history, rowid_existing)
+
+                            cursor.execute("""
+                                UPDATE tracking_data
+                                SET containerID = ?, itemNum = ?, history = ?
+                                {prodType_update}
+                                WHERE rowid = ?
+                            """.format(prodType_update=", prodType = ?" if prodType_normalized else ""), params)
+                        else:
+                            # No row exists: insert new row
+                            cursor.execute("""
+                                INSERT INTO tracking_data (containerID, orderNumber, itemNum, prodType, history)
+                                VALUES (?, ?, ?, ?, ?)
+                            """, (containerID, orderNumber, itemNum, prodType_to_store, new_history_entry))
+
+                        conn.commit()
+
 
 
             self.enqueue_tracking_job(job)
