@@ -22,7 +22,7 @@ db_lock_main = Lock()
 tracking_queue = Queue()
 
 # Debug flag - set to True for verbose logging
-DEBUG = False
+DEBUG = True
 
 def debug_log(message):
     if DEBUG:
@@ -33,6 +33,7 @@ def init_main_db():
     with sqlite3.connect(MAIN_DB_FILE) as conn:
         cursor = conn.cursor()
         
+        # ---- Employee Info ----
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS employee_info (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +46,7 @@ def init_main_db():
             )
         """)
 
+        # ---- Facility Workstations ----
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS facility_workstations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +56,7 @@ def init_main_db():
             )
         """)
 
+        # ---- Production Processes ----
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS productionProcesses (
                 Product TEXT PRIMARY KEY,
@@ -61,6 +64,7 @@ def init_main_db():
             )
         """)
 
+        # ---- Product Codes ----
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS product_codes (
                 prod_type TEXT PRIMARY KEY,
@@ -68,22 +72,43 @@ def init_main_db():
             )
         """)
 
-        
+        # ---- Employees Tasks ----
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS EmployeesTasks (
+                employeeName TEXT NOT NULL,
+                liveTask TEXT,
+                status TEXT,
+                isobarcode TEXT
+            )
+        """)
+
+        # ---- Manual Tasks ----
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS manualTasks (
+                task_names TEXT
+            )
+        """)
+
         conn.commit()
+
 
 def init_tracking_db():
     with sqlite3.connect(TRACKING_DB_FILE) as conn:
         cursor = conn.cursor()
+
+        # Create table if it doesn't exist (including new columns)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tracking_data (
                 containerID INTEGER,
                 orderNumber TEXT,
                 leadBarcode TEXT,
                 isoBarcode TEXT UNIQUE,
-                history TEXT
+                history TEXT,
+                itemNum INTEGER,
+                prodType TEXT
             )
         """)
-        cursor.execute("PRAGMA journal_mode=WAL")
+
         conn.commit()
 
 init_main_db()
@@ -165,6 +190,103 @@ class SimpleHandler(BaseHTTPRequestHandler):
             }
             debug_log(f"[GET] Returning {len(rows)} employees")
 
+        elif parsed_path.path == "/api/manualTasks":
+            debug_log("[GET] Fetching manual tasks")
+            try:
+                # No db_lock needed; simple read
+                conn = sqlite3.connect(MAIN_DB_FILE, uri=True, timeout=5, check_same_thread=False)
+                cursor = conn.cursor()
+                cursor.execute("SELECT task_names FROM manualTasks")
+                rows = cursor.fetchall()
+                conn.close()
+
+                # Extract task names as strings
+                tasks = [r[0] for r in rows if r[0] is not None]
+
+                response = {
+                    "status": "success",
+                    "tasks": tasks
+                }
+                debug_log(f"[GET] Returning {len(tasks)} manual tasks")
+            except Exception as e:
+                debug_log(f"[GET] Error fetching manual tasks: {e}")
+                response = {
+                    "status": "error",
+                    "message": str(e)
+                }
+
+        elif parsed_path.path == "/api/employeesTasks":
+            debug_log("[GET] Fetching employees tasks")
+            try:
+                conn = sqlite3.connect(MAIN_DB_FILE)
+                cursor = conn.cursor()
+                cursor.execute("SELECT employeeName, liveTask, status, isobarcode FROM EmployeesTasks")
+                rows = cursor.fetchall()
+                conn.close()
+
+                # Convert to 2D list format - now includes isobarcode
+                tasks_list = [[r[0], r[1], r[2], r[3]] for r in rows]
+
+                response = {
+                    "status": "success",
+                    "tasks": tasks_list
+                }
+                debug_log(f"[GET] Returning {len(tasks_list)} employee tasks")
+
+            except Exception as e:
+                debug_log(f"[GET] Error fetching employees tasks: {e}")
+                response = {
+                    "status": "error",
+                    "message": str(e)
+                }
+
+        elif parsed_path.path == "/api/pulseEmployees":
+            debug_log("[GET] Fetching employees with Pulse access")
+            try:
+                with db_lock_main:
+                    conn = sqlite3.connect(MAIN_DB_FILE)
+                    cursor = conn.cursor()
+
+                    # Select employees with non-null pulseAccess that contains 'Pulse'
+                    cursor.execute("""
+                        SELECT id, employeeName, password, pulseAccess
+                        FROM employee_info
+                        WHERE pulseAccess IS NOT NULL
+                    """)
+                    rows = cursor.fetchall()
+                    conn.close()
+
+                employees = []
+                for r in rows:
+                    # Safely parse pulseAccess JSON, default to empty list if invalid
+                    try:
+                        access_list = json.loads(r[3]) if r[3] else []
+                    except Exception as e:
+                        debug_log(f"Failed to parse pulseAccess for employee {r[1]}: {e}")
+                        access_list = []
+
+                    # Only include employees that actually have "Pulse" in the list
+                    if "Pulse" in access_list:
+                        employees.append({
+                            "id": r[0],
+                            "employeeName": r[1],
+                            "password": r[2],
+                            "pulseAccess": access_list
+                        })
+
+                response = {
+                    "status": "success",
+                    "employees": employees
+                }
+                debug_log(f"[GET] Returning {len(employees)} employees with Pulse access")
+
+            except Exception as e:
+                debug_log(f"[GET] Error fetching Pulse employees: {e}")
+                response = {
+                    "status": "error",
+                    "message": str(e)
+                }
+
         elif parsed_path.path == "/api/facilityWorkstations":
             debug_log("[GET] Fetching facility workstations")
             with db_lock_main:
@@ -243,27 +365,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 itemNum = None
                 prodType = None
 
-            # --- Helper: log missing prodType without duplicates ---
-            def log_missing_prodType(prodType, prefix="OrderSheetLostCodes"):
-                if not prodType:
-                    return
-                try:
-                    existing_lines = set()
-                    try:
-                        with open("LostProductCodes.txt", "r", encoding="utf-8") as f:
-                            existing_lines = set(line.strip() for line in f if line.strip())
-                    except FileNotFoundError:
-                        pass
-
-                    log_line = f"[{datetime.now().isoformat()}] {prefix}: {prodType}"
-                    if log_line not in existing_lines:
-                        with open("LostProductCodes.txt", "a", encoding="utf-8") as f:
-                            f.write(log_line + "\n")
-                except Exception as e:
-                    debug_log(f"[QUEUE] Failed to log missing prodType '{prodType}': {e}")
-
             def job(cursor):
-                nonlocal containerID, orderNumber, isoBarcode, leadBarcode, workstation, employeeName, itemNum
+                nonlocal containerID, orderNumber, isoBarcode, leadBarcode, workstation, employeeName, itemNum, prodType
 
                 # Normalize containerID to int
                 if containerID is not None:
@@ -291,7 +394,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
                 # --- ISO barcode branch ---
                 if isoBarcode:
-                    # Write whatever prodType is provided; no normalization check
+                    debug_log(f"[ISO] Processing isoBarcode={isoBarcode}")
                     cursor.execute(
                         "SELECT containerID, orderNumber, leadBarcode, history FROM tracking_data WHERE isoBarcode = ?",
                         (isoBarcode,)
@@ -299,7 +402,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     row = cursor.fetchone()
 
                     if row:
-                        # ISO exists → update
+                        # Exact isoBarcode match
+                        debug_log(f"[ISO] Found existing row for isoBarcode={isoBarcode}")
                         container_existing, orderNumber_existing, lead_existing, history_existing = row
                         container_to_use = containerID if containerID is not None else container_existing
                         order_to_use = orderNumber if orderNumber else orderNumber_existing
@@ -308,53 +412,63 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
                         cursor.execute("""
                             UPDATE tracking_data
-                            SET history = ?, containerID = ?, orderNumber = ?, leadBarcode = ?, itemNum = ?, prodType = ?
+                            SET history = ?, containerID = ?, orderNumber = ?, leadBarcode = ?, prodType = ?
                             WHERE isoBarcode = ?
-                        """, (updated_history, container_to_use, order_to_use, lead_to_use, itemNum, prodType, isoBarcode))
+                        """, (updated_history, container_to_use, order_to_use, lead_to_use, prodType, isoBarcode))
+                        debug_log(f"[ISO] Updated row for isoBarcode={isoBarcode}")
+
                     else:
-                        # ISO not found → try to match orderNumber + prodType first, then fallback, then insert
-                        row = None
-                        if prodType:
-                            cursor.execute("""
-                                SELECT containerID, leadBarcode, history
-                                FROM tracking_data
-                                WHERE orderNumber = ? AND prodType = ? AND isoBarcode IS NULL
-                                LIMIT 1
-                            """, (orderNumber, prodType))
-                            row = cursor.fetchone()
+                        # No isoBarcode match → try orderNumber match
+                        debug_log(f"[ISO] No existing row for isoBarcode={isoBarcode}, trying orderNumber match")
+                        cursor.execute("""
+                            SELECT rowid, prodType, containerID, leadBarcode, history
+                            FROM tracking_data
+                            WHERE orderNumber = ? AND isoBarcode IS NULL
+                        """, (orderNumber,))
+                        rows = cursor.fetchall()
 
-                        if not row:
-                            cursor.execute("""
-                                SELECT containerID, leadBarcode, history
-                                FROM tracking_data
-                                WHERE orderNumber = ? AND isoBarcode IS NULL
-                                LIMIT 1
-                            """, (orderNumber,))
-                            row = cursor.fetchone()
+                        # Step 1: Find row with matching prodType
+                        matching_row = next((r for r in rows if r[1] == prodType), None)
 
-                        if row:
-                            container_existing, lead_existing, history_existing = row
+                        if matching_row:
+                            rowid, _, container_existing, lead_existing, history_existing = matching_row
+                            debug_log(f"[ISO] Found row with matching prodType for orderNumber={orderNumber}")
+
+                        else:
+                            # Step 2: Fallback to row where prodType is NULL
+                            null_prod_row = next((r for r in rows if r[1] is None), None)
+                            if null_prod_row:
+                                rowid, _, container_existing, lead_existing, history_existing = null_prod_row
+                                debug_log(f"[ISO] Using row with NULL prodType for orderNumber={orderNumber}")
+                            else:
+                                # Step 3: No suitable row → insert new
+                                rowid = None
+                                debug_log(f"[ISO] No matching or NULL prodType row, inserting new for orderNumber={orderNumber}")
+
+                        if rowid:
+                            # Update the chosen row
                             container_to_use = containerID if containerID is not None else container_existing
                             lead_to_use = leadBarcode if leadBarcode else lead_existing
                             updated_history = append_history(history_existing, new_history_entry)
 
                             cursor.execute("""
                                 UPDATE tracking_data
-                                SET containerID = ?, leadBarcode = ?, isoBarcode = ?, history = ?, itemNum = ?, prodType = ?
-                                WHERE rowid = (
-                                    SELECT rowid FROM tracking_data
-                                    WHERE orderNumber = ? AND isoBarcode IS NULL
-                                    LIMIT 1
-                                )
-                            """, (container_to_use, lead_to_use, isoBarcode, updated_history, itemNum, prodType, orderNumber))
+                                SET containerID = ?, leadBarcode = ?, isoBarcode = ?, history = ?, prodType = ?
+                                WHERE rowid = ?
+                            """, (container_to_use, lead_to_use, isoBarcode, updated_history, prodType, rowid))
+                            debug_log(f"[ISO] Updated row for isoBarcode={isoBarcode}")
                         else:
+                            # Insert new row
                             cursor.execute("""
-                                INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, history, itemNum, prodType)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """, (containerID, orderNumber, leadBarcode, isoBarcode, new_history_entry, itemNum, prodType))
+                                INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, history, prodType)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            """, (containerID, orderNumber, leadBarcode, isoBarcode, new_history_entry, prodType))
+                            debug_log(f"[ISO] Inserted new row for isoBarcode={isoBarcode}")
 
+            
                 # --- Lead barcode branch ---
                 if leadBarcode:
+                    debug_log(f"[Lead] Processing leadBarcode={leadBarcode}")
                     cursor.execute(
                         "SELECT isoBarcode, containerID, orderNumber, history FROM tracking_data WHERE leadBarcode = ?",
                         (leadBarcode,)
@@ -368,128 +482,116 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             "UPDATE tracking_data SET history = ?, containerID = ?, orderNumber = ? WHERE isoBarcode = ?",
                             (updated_history, container_to_use, order_to_use, iso)
                         )
+                        debug_log(f"[Lead] Updated row for isoBarcode={iso}")
 
-                elif not leadBarcode and not isoBarcode and orderNumber:
-                    # --- Start of order-number-only branch ---
-                    def write_to_file(prodType_value):
-                        """Append missing prodType to a text file."""
-                        if prodType_value is not None:
-                            with open("missing_prodTypes.txt", "a", encoding="utf-8") as f:
-                                f.write(f"{prodType_value}\n")
+                # --- Order-number-only branch ---
+                if not isoBarcode and not leadBarcode and containerID:
+                    debug_log(f"[OrderOnly] Processing orderNumber={orderNumber}")
 
-                    # Step 0: Initialize
-                    normalized_prodType = None
-                    prodType_valid = False  # True if we get a worksheetRef
-
-                    # Step 1: Normalize prodType via product_codes
+                    # --- Step 0: Normalize prodType ---
                     try:
-                        with db_lock_main, sqlite3.connect(MAIN_DB_FILE) as conn_main:
-                            cursor_main = conn_main.cursor()
-                            cursor_main.execute(
-                                "SELECT worksheetRef FROM product_codes WHERE prod_type = ?",
-                                (prodType,)
-                            )
-                            result = cursor_main.fetchone()
+                        with sqlite3.connect(MAIN_DB_FILE, uri=True, timeout=5, check_same_thread=False) as conn_readonly:
+                            conn_readonly.execute("PRAGMA query_only = 1")  # Read-only mode
+                            cursor_readonly = conn_readonly.cursor()
+                            cursor_readonly.execute("""
+                                SELECT worksheetRef
+                                FROM product_codes
+                                WHERE prod_type = ?
+                                LIMIT 1
+                            """, (prodType,))
+                            result = cursor_readonly.fetchone()
                             if result and result[0] is not None:
-                                normalized_prodType = result[0]  # Use worksheetRef
-                                prodType_valid = True
+                                old_prodType = prodType
+                                prodType = result[0]  # Replace with worksheetRef
+                                debug_log(f"[OrderOnly] Normalized prodType '{old_prodType}' -> '{prodType}'")
                             else:
-                                normalized_prodType = None
-                                prodType_valid = False
+                                # --- Step 0b: Log missing prodType before setting to None ---
+                                if prodType:
+                                    try:
+                                        existing_lines = set()
+                                        try:
+                                            with open("missing_prodTypes.txt", "r", encoding="utf-8") as f:
+                                                existing_lines = set(line.strip() for line in f if line.strip())
+                                        except FileNotFoundError:
+                                            pass  # file doesn't exist yet
+
+                                        if prodType not in existing_lines:
+                                            with open("missing_prodTypes.txt", "a", encoding="utf-8") as f:
+                                                f.write(prodType + "\n")
+                                            debug_log(f"[OrderOnly] Logged missing prodType: '{prodType}'")
+                                    except Exception as e:
+                                        debug_log(f"[OrderOnly] Failed to log missing prodType '{prodType}': {e}")
+
+                                prodType = None
+                                debug_log(f"[OrderOnly] prodType not found in product_codes, set to None")
                     except Exception as e:
-                        debug_log(f"[QUEUE] Error checking prodType '{prodType}' in product_codes: {e}")
-                        normalized_prodType = None
-                        prodType_valid = False
+                        debug_log(f"[OrderOnly] Failed to normalize prodType '{prodType}': {e}")
+                        prodType = None
 
-                    # Connect to tracking_data DB
-                    with db_lock_main, sqlite3.connect(MAIN_DB_FILE) as conn:
-                        cursor = conn.cursor()
+                    # --- Step 1: Find rows with orderNumber and itemNum IS NULL ---
+                    cursor.execute("""
+                        SELECT rowid, prodType, history
+                        FROM tracking_data
+                        WHERE orderNumber = ? AND itemNum IS NULL
+                    """, (orderNumber,))
+                    rows = cursor.fetchall()
 
-                        if prodType_valid:
-                            # --- ROUTE 1: Valid normalized prodType ---
-                            # Check 1: orderNumber exists with matching prodType & NULL containerID
-                            cursor.execute("""
-                                SELECT rowid, history, itemNum
-                                FROM tracking_data
-                                WHERE orderNumber = ? AND prodType = ? AND containerID IS NULL
-                                LIMIT 1
-                            """, (orderNumber, normalized_prodType))
-                            row = cursor.fetchone()
-
-                            if row:
-                                # Match found → update
-                                rowid_existing, history_existing, itemNum_existing = row
-                                updated_history = append_history(history_existing, new_history_entry)
-                                container_to_use = containerID if containerID is not None else None
+                    if rows:
+                        # Step 2: Check for a row with matching prodType
+                        matching_row = next((r for r in rows if r[1] == prodType), None)
+                        if matching_row:
+                            rowid, _, history_existing = matching_row
+                            updated_history = append_history(history_existing, new_history_entry)
+                            if prodType is not None:
+                                cursor.execute("""
+                                    UPDATE tracking_data
+                                    SET containerID = ?, itemNum = ?, history = ?, prodType = ?
+                                    WHERE rowid = ?
+                                """, (containerID, itemNum, updated_history, prodType, rowid))
+                            else:
                                 cursor.execute("""
                                     UPDATE tracking_data
                                     SET containerID = ?, itemNum = ?, history = ?
                                     WHERE rowid = ?
-                                """, (container_to_use, itemNum, updated_history, rowid_existing))
-                                conn.commit()
-                            else:
-                                # Check 2: orderNumber exists with NULL containerID & NULL prodType
-                                cursor.execute("""
-                                    SELECT rowid, history, itemNum
-                                    FROM tracking_data
-                                    WHERE orderNumber = ? AND prodType IS NULL AND containerID IS NULL
-                                    LIMIT 1
-                                """, (orderNumber,))
-                                row2 = cursor.fetchone()
-
-                                if row2:
-                                    # Update this row with containerID, itemNum, normalized_prodType
-                                    rowid_existing, history_existing, itemNum_existing = row2
-                                    updated_history = append_history(history_existing, new_history_entry)
-                                    container_to_use = containerID if containerID is not None else None
-                                    cursor.execute("""
-                                        UPDATE tracking_data
-                                        SET containerID = ?, itemNum = ?, prodType = ?, history = ?
-                                        WHERE rowid = ?
-                                    """, (container_to_use, itemNum, normalized_prodType, updated_history, rowid_existing))
-                                    conn.commit()
-                                else:
-                                    # No matching rows → insert new row
-                                    cursor.execute("""
-                                        INSERT INTO tracking_data (containerID, orderNumber, itemNum, prodType, history)
-                                        VALUES (?, ?, ?, ?, ?)
-                                    """, (containerID, orderNumber, itemNum, normalized_prodType, new_history_entry))
-                                    conn.commit()
+                                """, (containerID, itemNum, updated_history, rowid))
+                            cursor.connection.commit()
+                            debug_log(f"[OrderOnly] Updated row with matching prodType for orderNumber={orderNumber}")
                         else:
-                            # --- ROUTE 2: Invalid / missing prodType ---
-                            # Step 1: Write original prodType to text file
-                            write_to_file(prodType)
-
-                            # Check 1: orderNumber exists with NULL containerID
-                            cursor.execute("""
-                                SELECT rowid, history, itemNum
-                                FROM tracking_data
-                                WHERE orderNumber = ? AND containerID IS NULL
-                                LIMIT 1
-                            """, (orderNumber,))
-                            row = cursor.fetchone()
-
-                            if row:
-                                rowid_existing, history_existing, itemNum_existing = row
-                                updated_history = append_history(history_existing, new_history_entry)
-                                container_to_use = containerID if containerID is not None else None
+                            # Step 3: Update first row with differing prodType
+                            differing_row = rows[0]
+                            rowid, _, history_existing = differing_row
+                            updated_history = append_history(history_existing, new_history_entry)
+                            if prodType is not None:
+                                cursor.execute("""
+                                    UPDATE tracking_data
+                                    SET containerID = ?, itemNum = ?, history = ?, prodType = ?
+                                    WHERE rowid = ?
+                                """, (containerID, itemNum, updated_history, prodType, rowid))
+                            else:
                                 cursor.execute("""
                                     UPDATE tracking_data
                                     SET containerID = ?, itemNum = ?, history = ?
                                     WHERE rowid = ?
-                                """, (container_to_use, itemNum, updated_history, rowid_existing))
-                                conn.commit()
-                            else:
-                                # No match → insert new row with prodType = NULL
-                                cursor.execute("""
-                                    INSERT INTO tracking_data (containerID, orderNumber, itemNum, prodType, history)
-                                    VALUES (?, ?, ?, ?, ?)
-                                """, (containerID, orderNumber, itemNum, None, new_history_entry))
-                                conn.commit()
+                                """, (containerID, itemNum, updated_history, rowid))
+                            cursor.connection.commit()
+                            debug_log(f"[OrderOnly] Updated row with differing prodType for orderNumber={orderNumber}")
+                    else:
+                        # Step 4: Insert new row
+                        if prodType is not None:
+                            cursor.execute("""
+                                INSERT INTO tracking_data (containerID, orderNumber, itemNum, prodType, history)
+                                VALUES (?, ?, ?, ?, ?)
+                            """, (containerID, orderNumber, itemNum, prodType, new_history_entry))
+                        else:
+                            cursor.execute("""
+                                INSERT INTO tracking_data (containerID, orderNumber, itemNum, history)
+                                VALUES (?, ?, ?, ?)
+                            """, (containerID, orderNumber, itemNum, new_history_entry))
+                        cursor.connection.commit()
+                        debug_log(f"[OrderOnly] Inserted new row for orderNumber={orderNumber}")
 
             self.enqueue_tracking_job(job)
             return
-
 
         elif parsed_path.path == "/api/moveContainer":
             debug_log("[GET] Move container request")
@@ -678,6 +780,86 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
                 return
 
+        elif parsed_path.path == "/api/updateEmployeeTask":
+            debug_log("[POST] Matched: /api/updateEmployeeTask")
+            
+            employee_name = data.get("employeeName")
+            live_task = data.get("liveTask")
+            status = data.get("status")
+            isobarcode = data.get("isobarcode")  # <-- ADD THIS LINE
+            erase = data.get("erase", False)
+
+            if not employee_name:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": "employeeName is required"
+                }).encode("utf-8"))
+                return
+
+            try:
+                with db_lock_main:
+                    conn = sqlite3.connect(MAIN_DB_FILE)
+                    cursor = conn.cursor()
+
+                    if erase:
+                        if live_task:
+                            # Delete ONLY the first matching task for this employee
+                            cursor.execute("""
+                                DELETE FROM EmployeesTasks 
+                                WHERE rowid = (
+                                    SELECT rowid FROM EmployeesTasks 
+                                    WHERE employeeName = ? AND liveTask = ? 
+                                    LIMIT 1
+                                )
+                            """, (employee_name, live_task))
+                            debug_log(f"[POST] Deleted one task for employee '{employee_name}': {live_task}")
+                            message = f"Task deleted for employee '{employee_name}'"
+                        else:
+                            # Delete ALL tasks for this employee (if no liveTask specified)
+                            cursor.execute(
+                                "DELETE FROM EmployeesTasks WHERE employeeName = ?",
+                                (employee_name,)
+                            )
+                            debug_log(f"[POST] Deleted all tasks for employee '{employee_name}'")
+                            message = f"All tasks deleted for employee '{employee_name}'"
+                    else:
+                        # ALWAYS INSERT - allow multiple rows per employee
+                        cursor.execute(
+                            "INSERT INTO EmployeesTasks (employeeName, liveTask, status, isobarcode) VALUES (?, ?, ?, ?)",
+                            (employee_name, live_task, status, isobarcode)
+                        )
+                        debug_log(f"[POST] Inserted new task for employee '{employee_name}': {live_task} | Barcode: {isobarcode}")
+                        message = f"Task created for employee '{employee_name}'"
+
+                    conn.commit()
+                    conn.close()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "success",
+                    "message": message
+                }).encode("utf-8"))
+                return
+
+            except Exception as e:
+                debug_log(f"[POST] ERROR in updateEmployeeTask: {e}")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": str(e)
+                }).encode("utf-8"))
+                return
+
         elif parsed_path.path == "/api/loggedin":
             debug_log("[POST] Matched: /api/loggedin")
             debug_log(f"[POST] Data keys: {list(data.keys())}")
@@ -753,6 +935,65 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     "message": f"Internal server error: {str(e)}"
                 }).encode("utf-8"))
                 return
+
+        elif parsed_path.path == "/api/editTasks":
+            debug_log("[POST] Matched: /api/editTasks")
+            
+            task_name = data.get("taskName")
+            edit_flag = data.get("editFlag")
+
+            if not task_name or not isinstance(edit_flag, bool):
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": "taskName (string) and editFlag (boolean) are required"
+                }).encode("utf-8"))
+                return
+
+            try:
+                with db_lock_main:
+                    conn = sqlite3.connect(MAIN_DB_FILE)
+                    cursor = conn.cursor()
+
+                    if edit_flag:  # Add task if not exists
+                        cursor.execute("SELECT 1 FROM manualTasks WHERE task_names = ?", (task_name,))
+                        if not cursor.fetchone():
+                            cursor.execute("INSERT INTO manualTasks (task_names) VALUES (?)", (task_name,))
+                            debug_log(f"[POST] Added new task: {task_name}")
+                        else:
+                            debug_log(f"[POST] Task '{task_name}' already exists, skipping insert")
+                    else:  # Delete task if exists
+                        cursor.execute("DELETE FROM manualTasks WHERE task_names = ?", (task_name,))
+                        debug_log(f"[POST] Deleted task: {task_name}")
+
+                    conn.commit()
+                    conn.close()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "success",
+                    "message": f"Task '{task_name}' {'added' if edit_flag else 'deleted'} successfully"
+                }).encode("utf-8"))
+                return
+
+            except Exception as e:
+                debug_log(f"[POST] ERROR in editTasks: {e}")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": f"Internal server error: {str(e)}"
+                }).encode("utf-8"))
+                return
+
 
         elif parsed_path.path == "/api/loggedOut":
             debug_log("[POST] Matched: /api/loggedOut")
@@ -1143,22 +1384,24 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 history_rows = []
 
                 if iso_barcode:
-                    cursor.execute("SELECT history, isoBarcode FROM tracking_data WHERE isoBarcode = ?", (iso_barcode,))
+                    cursor.execute("SELECT containerID, isoBarcode, history FROM tracking_data WHERE isoBarcode = ?", (iso_barcode,))
                     row = cursor.fetchone()
-                    if row and row[0]:
-                        history_rows.append([row[1]] + row[0].strip().split("\n"))
+                    if row and row[2]:
+                        # row[0] = containerID, row[1] = iso, row[2] = history
+                        history_rows.append([row[0], row[1]] + row[2].strip().split("\n"))
 
                 if lead_barcode:
-                    cursor.execute("SELECT history, isoBarcode FROM tracking_data WHERE leadBarcode = ?", (lead_barcode,))
+                    cursor.execute("SELECT containerID, isoBarcode, history FROM tracking_data WHERE leadBarcode = ?", (lead_barcode,))
                     for row in cursor.fetchall():
-                        if row[0]:
-                            history_rows.append([row[1]] + row[0].strip().split("\n"))
+                        if row[2]:
+                            history_rows.append([row[0], row[1]] + row[2].strip().split("\n"))
 
                 if order_number:
-                    cursor.execute("SELECT history, isoBarcode FROM tracking_data WHERE orderNumber = ?", (order_number,))
+                    cursor.execute("SELECT containerID, isoBarcode, history FROM tracking_data WHERE orderNumber = ?", (order_number,))
                     for row in cursor.fetchall():
-                        if row[0]:
-                            history_rows.append([row[1]] + row[0].strip().split("\n"))
+                        if row[2]:
+                            history_rows.append([row[0], row[1]] + row[2].strip().split("\n"))
+
 
                 conn.close()
 
