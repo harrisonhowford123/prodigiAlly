@@ -786,7 +786,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
             employee_name = data.get("employeeName")
             live_task = data.get("liveTask")
             status = data.get("status")
-            isobarcode = data.get("isobarcode")  # <-- ADD THIS LINE
+            isobarcode = data.get("isobarcode")
             erase = data.get("erase", False)
 
             if not employee_name:
@@ -827,13 +827,39 @@ class SimpleHandler(BaseHTTPRequestHandler):
                             debug_log(f"[POST] Deleted all tasks for employee '{employee_name}'")
                             message = f"All tasks deleted for employee '{employee_name}'"
                     else:
-                        # ALWAYS INSERT - allow multiple rows per employee
-                        cursor.execute(
-                            "INSERT INTO EmployeesTasks (employeeName, liveTask, status, isobarcode) VALUES (?, ?, ?, ?)",
-                            (employee_name, live_task, status, isobarcode)
-                        )
-                        debug_log(f"[POST] Inserted new task for employee '{employee_name}': {live_task} | Barcode: {isobarcode}")
-                        message = f"Task created for employee '{employee_name}'"
+                        # Check if task exists with matching isobarcode
+                        if isobarcode:
+                            cursor.execute("""
+                                SELECT rowid FROM EmployeesTasks 
+                                WHERE employeeName = ? AND isobarcode = ?
+                            """, (employee_name, isobarcode))
+                            existing_row = cursor.fetchone()
+                            
+                            if existing_row:
+                                # UPDATE existing task
+                                cursor.execute("""
+                                    UPDATE EmployeesTasks 
+                                    SET status = ?, liveTask = ?
+                                    WHERE employeeName = ? AND isobarcode = ?
+                                """, (status, live_task, employee_name, isobarcode))
+                                debug_log(f"[POST] Updated task for employee '{employee_name}' with barcode {isobarcode}: status={status}")
+                                message = f"Task updated for employee '{employee_name}'"
+                            else:
+                                # INSERT new task
+                                cursor.execute(
+                                    "INSERT INTO EmployeesTasks (employeeName, liveTask, status, isobarcode) VALUES (?, ?, ?, ?)",
+                                    (employee_name, live_task, status, isobarcode)
+                                )
+                                debug_log(f"[POST] Inserted new task for employee '{employee_name}': {live_task} | Barcode: {isobarcode}")
+                                message = f"Task created for employee '{employee_name}'"
+                        else:
+                            # No isobarcode provided - always INSERT
+                            cursor.execute(
+                                "INSERT INTO EmployeesTasks (employeeName, liveTask, status, isobarcode) VALUES (?, ?, ?, ?)",
+                                (employee_name, live_task, status, isobarcode)
+                            )
+                            debug_log(f"[POST] Inserted new task for employee '{employee_name}': {live_task}")
+                            message = f"Task created for employee '{employee_name}'"
 
                     conn.commit()
                     conn.close()
