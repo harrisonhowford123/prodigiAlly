@@ -5,9 +5,9 @@ import threading
 import time
 from multiprocessing import Process, Queue
 from tkinter import Tk, Canvas, StringVar, Toplevel, Label, IntVar, Button
-from tkinter.ttk import Combobox, Entry, Style, Button as TtkButton
+from tkinter.ttk import Combobox, Entry, Style, Button as TtkButton, Treeview, Scrollbar
 from PIL import Image, ImageTk, ImageFilter
-from clientCalls import fetch_facility_workstations, send_tracking_data, move_container, fetch_employee_start_time, log_employee_time, loggedOut
+from clientCalls import fetch_facility_workstations, send_tracking_data, move_container, fetch_employee_start_time, log_employee_time, loggedOut, fetch_employees_tasks, update_employee_task
 import Barcode_Scanning as barcode_listener
 import tkinter.font as tkFont
 from datetime import datetime, timedelta
@@ -102,7 +102,7 @@ def show_time_popup(employee_name):
             hour=hour_start.get(), minute=minute_start.get(), second=0
         )
         end_time = datetime.combine(today, datetime.min.time()).replace(
-            hour=hour_end.get(), minute=minute_end.get(), second=0
+            hour=hour_end.get(), minute=hour_end.get(), second=0
         )
 
         if end_time < start_time:
@@ -359,6 +359,28 @@ def create_standard_window(employee):
               selectforeground=[('readonly', 'black')])
     style.configure('Custom.TEntry', fieldbackground='#E6E1D6', foreground='black', padding=0)
 
+    # Treeview style for tasks table
+    style.configure('Tasks.Treeview',
+                    background='#E6E1D6',
+                    foreground='black',
+                    fieldbackground='#E6E1D6',
+                    borderwidth=0,
+                    rowheight=25)
+    style.configure('Tasks.Treeview.Heading',
+                    background='#E6E1D6',
+                    foreground='black',
+                    borderwidth=0)
+    style.map('Tasks.Treeview',
+              background=[('selected', '#6D05FF')],
+              foreground=[('selected', 'white')])
+    
+    # Scrollbar style
+    style.configure('Tasks.Vertical.TScrollbar',
+                    background='#E6E1D6',
+                    troughcolor='#E6E1D6',
+                    borderwidth=0,
+                    arrowcolor='black')
+
     style.configure("Red.TButton", background="#FF0000", foreground="white", font=("Arial", 6, "bold"), padding=2)
     style.configure("Purple.TButton", background="#6D05FF", foreground="white", font=("Arial", 6, "bold"), padding=2)
     style.configure("Green.TButton", background="#28A745", foreground="white", font=("Arial", 6, "bold"), padding=2)
@@ -377,6 +399,26 @@ def create_standard_window(employee):
     barcode_var = StringVar(value="")
     entry2 = Entry(root, style='Custom.TEntry', textvariable=barcode_var, state='readonly')
     entry2.place(relx=0.18, rely=0.213, relwidth=0.7, relheight=0.03)
+
+    # ---------------- Tasks Table ----------------
+    # Create frame for treeview and scrollbar
+    # Calculate gap: barcode entry is at rely=0.213, reprint button at rely=0.27
+    # Gap = 0.27 - 0.213 - 0.03 (button height) = 0.027
+    # Logout button is at rely=0.31, so table should start at 0.31 + 0.033 + 0.027 = 0.37
+    tasks_frame_y = 0.37
+    tasks_tree = Treeview(root, columns=('Task',), show='tree headings', style='Tasks.Treeview', selectmode='browse', height=10)
+    tasks_tree.place(relx=0.18, rely=tasks_frame_y, relwidth=0.65, relheight=0.46)
+    
+    # Configure columns
+    tasks_tree.heading('#0', text='Available Tasks', anchor='w')
+    tasks_tree.column('#0', width=400, anchor='w')
+    tasks_tree.heading('Task', text='')
+    tasks_tree.column('Task', width=0, stretch=False)
+    
+    # Scrollbar
+    tasks_scrollbar = Scrollbar(root, orient='vertical', command=tasks_tree.yview, style='Tasks.Vertical.TScrollbar')
+    tasks_scrollbar.place(relx=0.83, rely=tasks_frame_y, relwidth=0.05, relheight=0.46)
+    tasks_tree.configure(yscrollcommand=tasks_scrollbar.set)
 
     # ---------------- Button Commands ----------------
     def reprint_action():
@@ -457,6 +499,99 @@ def create_standard_window(employee):
 
         threading.Thread(target=task, daemon=True).start()
 
+    def start_task_action():
+        print("[STANDARD] Start Task button clicked")
+        selected_item = tasks_tree.selection()
+        if selected_item:
+            item_text = tasks_tree.item(selected_item[0], 'text')
+            item_values = tasks_tree.item(selected_item[0], 'values')
+            
+            # Extract isobarcode from stored values
+            isobarcode = item_values[0] if item_values else None
+            
+            # Extract task name (remove " - status" from the end)
+            task_parts = item_text.rsplit(' - ', 1)
+            task_name = task_parts[0] if task_parts else item_text
+            
+            print(f"[STANDARD] Selected task to start: {task_name}, isobarcode: {isobarcode}")
+            
+            if isobarcode:
+                try:
+                    # Update the task status to "Started By [Employee Name]"
+                    new_status = f"Started By {employee.employeeName}"
+                    response = update_employee_task(
+                        employeeName=employee.employeeName,
+                        liveTask=task_name,
+                        status=new_status,
+                        isobarcode=isobarcode,
+                        server_ip="192.168.111.230",
+                        port=8080
+                    )
+                    
+                    if response.get("status") == "success":
+                        print(f"[STANDARD] Successfully started task: {task_name}")
+                        # Refresh the tasks table to show updated status
+                        fetch_tasks_thread()
+                    else:
+                        print(f"[STANDARD] Failed to start task: {response.get('message')}")
+                        show_custom_popup("Error", message=response.get("message", "Failed to start task"))
+                        
+                except Exception as e:
+                    print(f"[STANDARD] Error starting task: {e}")
+                    show_custom_popup("Connection Error", image_path="images/errorConnection.png", errorConnection=True)
+            else:
+                print("[STANDARD] No isobarcode found for selected task")
+        else:
+            print("[STANDARD] No task selected")
+
+    def sign_off_task_action():
+        print("[STANDARD] Sign Off Task button clicked")
+        selected_item = tasks_tree.selection()
+        if selected_item:
+            item_text = tasks_tree.item(selected_item[0], 'text')
+            item_values = tasks_tree.item(selected_item[0], 'values')
+            
+            # Extract isobarcode from stored values
+            isobarcode = item_values[0] if item_values else None
+            
+            # Extract task name (remove " - status" from the end)
+            task_parts = item_text.rsplit(' - ', 1)
+            task_name = task_parts[0] if task_parts else item_text
+            
+            print(f"[STANDARD] Selected task: {task_name}, isobarcode: {isobarcode}")
+            
+            if isobarcode:
+                try:
+                    # Update the task status to "Signed Off"
+                    response = update_employee_task(
+                        employeeName=employee.employeeName,
+                        liveTask=task_name,
+                        status="Signed Off",
+                        isobarcode=isobarcode,
+                        server_ip="192.168.111.230",
+                        port=8080
+                    )
+                    
+                    if response.get("status") == "success":
+                        print(f"[STANDARD] Successfully signed off task: {task_name}")
+                        # Refresh the tasks table to show updated status
+                        fetch_tasks_thread()
+                    else:
+                        print(f"[STANDARD] Failed to sign off task: {response.get('message')}")
+                        show_custom_popup("Error", message=response.get("message", "Failed to sign off task"))
+                        
+                except Exception as e:
+                    print(f"[STANDARD] Error signing off task: {e}")
+                    show_custom_popup("Connection Error", image_path="images/errorConnection.png", errorConnection=True)
+            else:
+                print("[STANDARD] No isobarcode found for selected task")
+        else:
+            print("[STANDARD] No task selected")
+
+    def refresh_tasks_action():
+        print("[STANDARD] Refresh Tasks button clicked")
+        fetch_tasks_thread()
+
     def exit_action():
         print("[STANDARD] Logout button clicked")
         nonlocal window_result
@@ -479,6 +614,18 @@ def create_standard_window(employee):
     complete_batch_btn.place(relx=0.36, rely=0.27, relwidth=0.35, relheight=0.033)
     exit_btn = TtkButton(root, text="Logout", style="Purple.TButton", command=exit_action)
     exit_btn.place(relx=0.18, rely=0.31, relwidth=0.16, relheight=0.033)
+    
+    # Start Task button (below table)
+    start_task_btn = TtkButton(root, text="Start Task", style="Green.TButton", command=start_task_action)
+    start_task_btn.place(relx=0.18, rely=0.84, relwidth=0.23, relheight=0.033)
+    
+    # Sign Off Task button (below Start Task)
+    sign_off_btn = TtkButton(root, text="Sign Off Task", style="Red.TButton", command=sign_off_task_action)
+    sign_off_btn.place(relx=0.18, rely=0.88, relwidth=0.35, relheight=0.033)
+    
+    # Refresh Tasks button (right of Sign Off Task)
+    refresh_tasks_btn = TtkButton(root, text="Refresh Tasks", style="Purple.TButton", command=refresh_tasks_action)
+    refresh_tasks_btn.place(relx=0.43, rely=0.84, relwidth=0.23, relheight=0.033)
 
     # ---------------- Settings Cog Button ----------------
     try:
@@ -536,6 +683,15 @@ def create_standard_window(employee):
             style.configure(style_name, font=f, padding=0)
         combo_list_font = tkFont.Font(family="Arial", size=font_size)
         root.option_add('*TCombobox*Listbox*Font', combo_list_font)
+        
+        # Resize tasks table font
+        tree_height = tasks_tree.winfo_height()
+        if tree_height > 1:
+            tree_font_size = max(8, get_font_size_for_widget(tree_height // 10, "Arial", False))
+            tree_font = tkFont.Font(family="Arial", size=tree_font_size)
+            style.configure('Tasks.Treeview', font=tree_font, rowheight=int(tree_font_size * 1.8))
+            heading_font = tkFont.Font(family="Arial", size=tree_font_size, weight="bold")
+            style.configure('Tasks.Treeview.Heading', font=heading_font)
 
     root.bind("<Configure>", resize_ui)
     root.after(100, resize_ui)
@@ -545,7 +701,10 @@ def create_standard_window(employee):
         buttons = [
             ('Red.TButton', reprint_btn),
             ('Green.TButton', complete_batch_btn),
-            ('Purple.TButton', exit_btn)
+            ('Purple.TButton', exit_btn),
+            ('Purple.TButton', start_task_btn),
+            ('Green.TButton', sign_off_btn),
+            ('Purple.TButton', refresh_tasks_btn)
         ]
         for style_name, btn in buttons:
             w = btn.winfo_width()
@@ -560,7 +719,7 @@ def create_standard_window(employee):
     root.bind("<Configure>", resize_buttons)
     root.after(100, resize_buttons)
 
-    # ---------------- Fetch Workstations ----------------
+    # ---------------- Fetch Workstations and Tasks ----------------
     def fetch_workstations_thread():
         print("[STANDARD] Fetching workstations...")
         try:
@@ -568,6 +727,8 @@ def create_standard_window(employee):
         except Exception as e:
             print(f"[STANDARD] Error fetching workstations: {e}")
             workstations = []
+
+        from datetime import datetime
 
         def update_combo_and_show_popup():
             combo1['values'] = sorted(workstations, key=str.lower) if workstations else []
@@ -589,17 +750,56 @@ def create_standard_window(employee):
                 root.after(0, lambda: show_time_popup(employee.employeeName))
             else:
                 try:
-                    parsed_start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                    if isinstance(start_time, datetime):
+                        parsed_start_time = start_time
+                    else:
+                        parsed_start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+
                     if parsed_start_time.date() != today:
                         root.after(0, lambda: show_time_popup(employee.employeeName))
                     else:
                         print(f"[STANDARD] Employee {employee.employeeName} already has start time for today: {parsed_start_time}")
-                except ValueError:
+                except Exception as e:
+                    print(f"[ERROR] Could not parse start time: {e}")
                     root.after(0, lambda: show_time_popup(employee.employeeName))
 
         root.after(0, update_combo_and_show_popup)
 
+    def fetch_tasks_thread():
+        print("[STANDARD] Fetching manual tasks...")
+        try:
+            all_tasks = fetch_employees_tasks()
+            print(f"[STANDARD] Fetched tasks: {all_tasks}")
+            
+            # Get selected workstation
+            selected_workstation = combo1.get().strip()
+            
+            # Filter tasks for current employee OR matching workstation name
+            employee_tasks = [
+                task for task in all_tasks 
+                if task[0] == employee.employeeName or task[0] == selected_workstation
+            ]
+            print(f"[STANDARD] Filtered tasks for {employee.employeeName} or workstation '{selected_workstation}': {employee_tasks}")
+            
+            def update_tasks_table():
+                # Clear existing items
+                for item in tasks_tree.get_children():
+                    tasks_tree.delete(item)
+                
+                # Add filtered tasks - store full task data in item values
+                for task in employee_tasks:
+                    # task format: [name, task, status, isobarcode]
+                    task_text = f"{task[1]} - {task[2]}"
+                    # Store the isobarcode in the values so we can retrieve it later
+                    tasks_tree.insert('', 'end', text=task_text, values=(task[3],))
+            
+            root.after(0, update_tasks_table)
+            
+        except Exception as e:
+            print(f"[STANDARD] Error fetching tasks: {e}")
+
     threading.Thread(target=fetch_workstations_thread, daemon=True).start()
+    threading.Thread(target=fetch_tasks_thread, daemon=True).start()
 
     # ---------------- Barcode Listener ----------------
     print("[STANDARD] Starting barcode listener process...")
