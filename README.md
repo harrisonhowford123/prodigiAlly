@@ -6,7 +6,7 @@ Remote barcode tracking software for windows/mac systems that connects and updat
 python -m PyInstaller ^
   --onefile ^
   --windowed ^
-  --name "Prodigi Ally - Printing Station" ^
+  --name "Prodigi Ally - Standard Station" ^
   --icon "MyAppIcon.ico" ^
   --add-data ".\images;images" ^
   .\main.py
