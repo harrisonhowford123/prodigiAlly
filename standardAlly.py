@@ -98,11 +98,12 @@ def show_time_popup(employee_name):
 
     def on_submit():
         today = datetime.now().date()
+
         start_time = datetime.combine(today, datetime.min.time()).replace(
             hour=hour_start.get(), minute=minute_start.get(), second=0
         )
         end_time = datetime.combine(today, datetime.min.time()).replace(
-            hour=hour_end.get(), minute=hour_end.get(), second=0
+            hour=hour_end.get(), minute=minute_end.get(), second=0
         )
 
         if end_time < start_time:
@@ -110,19 +111,21 @@ def show_time_popup(employee_name):
 
         try:
             response = log_employee_time(
-                employee_name=employee_name,
+                employeeName=employee_name,
                 start_time=start_time,
                 end_time=end_time,
                 server_ip="192.168.111.230",
                 port=8080
             )
+
             if response.get("status") != "success":
                 show_custom_popup("Error", message=response.get("message", "Failed to log time"))
+
         except Exception as e:
             show_custom_popup("Connection Error", message=str(e))
 
-        print(f"[STANDARD] Time popup closed")
         popup.destroy()
+
 
     style = Style()
     style.theme_use('clam')
@@ -297,6 +300,7 @@ def create_standard_window(employee):
     global root, p
     window_result = False
     root = Tk()
+    root.withdraw()  # hide window until fully initialized
     root.title("Prodigi Ally")
     root.resizable(False, False)
     
@@ -901,6 +905,10 @@ def create_standard_window(employee):
 
     # ---------------- Main Loop ----------------
     print("[STANDARD] Starting mainloop...")
+    root.update_idletasks()
+    root.deiconify()  # show only once everything is ready
+    root.lift()
+
     root.mainloop()
     
     # This code only runs after window is destroyed
