@@ -361,18 +361,21 @@ def create_standard_window(employee):
 
     # Treeview style for tasks table
     style.configure('Tasks.Treeview',
-                    background='#E6E1D6',
-                    foreground='black',
-                    fieldbackground='#E6E1D6',
-                    borderwidth=0,
-                    rowheight=25)
+                background='#E6E1D6',
+                foreground='black',
+                fieldbackground='#E6E1D6',
+                borderwidth=0,
+                rowheight=40)  # enough for 2 lines
+
     style.configure('Tasks.Treeview.Heading',
-                    background='#E6E1D6',
-                    foreground='black',
-                    borderwidth=0)
-    style.map('Tasks.Treeview',
-              background=[('selected', '#6D05FF')],
-              foreground=[('selected', 'white')])
+                background='black',
+                foreground='white',
+                font=('Arial', 10, 'bold'),
+                borderwidth=1,
+                relief='raised')
+    style.map('Tasks.Treeview.Heading',
+              background=[('active', 'black'), ('pressed', 'black')],
+              foreground=[('active', 'white'), ('pressed', 'white')])
     
     # Scrollbar style
     style.configure('Tasks.Vertical.TScrollbar',
@@ -524,8 +527,6 @@ def create_standard_window(employee):
                         liveTask=task_name,
                         status=new_status,
                         isobarcode=isobarcode,
-                        server_ip="192.168.111.230",
-                        port=8080
                     )
                     
                     if response.get("status") == "success":
@@ -563,13 +564,12 @@ def create_standard_window(employee):
             if isobarcode:
                 try:
                     # Update the task status to "Signed Off"
+                    new_status = f"Requested Finish By {employee.employeeName}"
                     response = update_employee_task(
                         employeeName=employee.employeeName,
                         liveTask=task_name,
-                        status="Signed Off",
+                        status=new_status,
                         isobarcode=isobarcode,
-                        server_ip="192.168.111.230",
-                        port=8080
                     )
                     
                     if response.get("status") == "success":
@@ -790,8 +790,24 @@ def create_standard_window(employee):
                 for task in employee_tasks:
                     # task format: [name, task, status, isobarcode]
                     task_text = f"{task[1]} - {task[2]}"
-                    # Store the isobarcode in the values so we can retrieve it later
-                    tasks_tree.insert('', 'end', text=task_text, values=(task[3],))
+                    # Wrap long text lines at 40 characters
+                    def wrap_text(text, limit=40):
+                        words = text.split(' ')
+                        lines, current = [], ''
+                        for word in words:
+                            if len(current + ' ' + word) <= limit:
+                                current += (' ' if current else '') + word
+                            else:
+                                lines.append(current)
+                                current = word
+                        if current:
+                            lines.append(current)
+                        return '\n'.join(lines)
+
+                    # Use wrapping for display only, not values
+                    wrapped_text = wrap_text(task_text)
+                    tasks_tree.insert('', 'end', text=wrapped_text, values=(task[3],))
+
             
             root.after(0, update_tasks_table)
             
@@ -800,6 +816,19 @@ def create_standard_window(employee):
 
     threading.Thread(target=fetch_workstations_thread, daemon=True).start()
     threading.Thread(target=fetch_tasks_thread, daemon=True).start()
+
+    # Function to clear table selection
+    def clear_task_selection(event):
+        # Ignore clicks that are on buttons or the table itself
+        widget = event.widget
+        if isinstance(widget, TtkButton) or widget == tasks_tree:
+            return
+        tasks_tree.selection_remove(tasks_tree.selection())
+
+    # Bind left-clicks on the root window (and background Canvas) to clear selection
+    root.bind("<Button-1>", clear_task_selection, add="+")
+    canvas.bind("<Button-1>", clear_task_selection, add="+")
+
 
     # ---------------- Barcode Listener ----------------
     print("[STANDARD] Starting barcode listener process...")
