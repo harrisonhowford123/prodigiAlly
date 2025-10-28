@@ -266,25 +266,27 @@ def edit_tasks(taskName: str, editFlag: bool, server_ip: str = target_ip, port: 
         return {"status": "error", "message": "Invalid JSON response from server"}
 
 
-def log_employee_time(employeeName: str, logged_in: datetime, duration: str,
+def log_employee_time(employeeName: str, start_time: datetime, end_time: datetime,
                       server_ip=target_ip, port=8080):
-
-    if not employeeName:
-        return {"status": "error", "message": "employeeName is required"}
+    """
+    Logs an employee's start and end times to the backend.
+    Matches the /api/logEmployeeTime endpoint.
+    """
+    if not employeeName or not start_time or not end_time:
+        return {"status": "error", "message": "employeeName, start_time, and end_time are required"}
 
     url = f"http://{server_ip}:{port}/api/logEmployeeTime"
 
     payload = {
         "employeeName": employeeName,
-        "logged_in": logged_in.strftime("%Y-%m-%d %H:%M:%S"),
-        "duration": duration
+        "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S")
     }
 
     try:
         response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
-        resp_json = response.json()
-        return resp_json
+        return response.json()
 
     except requests.RequestException as e:
         return {"status": "error", "message": str(e)}
