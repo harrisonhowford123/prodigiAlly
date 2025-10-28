@@ -303,6 +303,7 @@ def create_standard_window(employee):
     root.withdraw()  # hide window until fully initialized
     root.title("Prodigi Ally")
     root.resizable(False, False)
+    root.attributes('-alpha',0.0)
     
     # ---------------- Log Employee as Logged In ----------------
     try:
@@ -904,11 +905,32 @@ def create_standard_window(employee):
     root.after(50, poll_queue)
 
     # ---------------- Main Loop ----------------
-    print("[STANDARD] Starting mainloop...")
-    root.update_idletasks()
-    root.deiconify()  # show only once everything is ready
-    root.lift()
+    root.after(50, poll_queue)
 
+    # ---------------- Finalize and Show Window ----------------
+    def show_window_when_ready():
+        """Ensure all widgets are rendered before showing window"""
+        root.update_idletasks()  # Process all pending GUI updates
+        root.update()  # Force complete redraw
+        
+        # Double-check that key widgets are actually rendered
+        if (combo1.winfo_width() > 1 and entry1.winfo_width() > 1 and 
+            canvas.winfo_width() > 1 and tasks_tree.winfo_width() > 1):
+            # Everything is ready, make window visible
+            root.deiconify()
+            root.attributes('-alpha', 1.0)  # Fade in
+            root.lift()
+            root.focus_force()
+            print("[STANDARD] Window fully loaded and displayed")
+        else:
+            # Not ready yet, try again shortly
+            root.after(50, show_window_when_ready)
+    
+    # Start the visibility check after initial setup
+    root.after(100, show_window_when_ready)
+
+    # ---------------- Main Loop ----------------
+    print("[STANDARD] Starting mainloop...")
     root.mainloop()
     
     # This code only runs after window is destroyed
