@@ -831,19 +831,19 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         if isobarcode:
                             cursor.execute("""
                                 SELECT rowid FROM EmployeesTasks 
-                                WHERE employeeName = ? AND isobarcode = ?
-                            """, (employee_name, isobarcode))
+                                WHERE isobarcode = ?
+                            """, (isobarcode,))
                             existing_row = cursor.fetchone()
                             
                             if existing_row:
-                                # UPDATE existing task
+                                # UPDATE existing task (regardless of employee)
                                 cursor.execute("""
                                     UPDATE EmployeesTasks 
-                                    SET status = ?, liveTask = ?
-                                    WHERE employeeName = ? AND isobarcode = ?
-                                """, (status, live_task, employee_name, isobarcode))
-                                debug_log(f"[POST] Updated task for employee '{employee_name}' with barcode {isobarcode}: status={status}")
-                                message = f"Task updated for employee '{employee_name}'"
+                                    SET employeeName = ?, liveTask = ?, status = ?
+                                    WHERE isobarcode = ?
+                                """, (employee_name, live_task, status, isobarcode))
+                                debug_log(f"[POST] Updated task with barcode {isobarcode}: employee={employee_name}, task={live_task}, status={status}")
+                                message = f"Task updated for barcode {isobarcode}"
                             else:
                                 # INSERT new task
                                 cursor.execute(
@@ -852,6 +852,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                                 )
                                 debug_log(f"[POST] Inserted new task for employee '{employee_name}': {live_task} | Barcode: {isobarcode}")
                                 message = f"Task created for employee '{employee_name}'"
+
                         else:
                             # No isobarcode provided - always INSERT
                             cursor.execute(
