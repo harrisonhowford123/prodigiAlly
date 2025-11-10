@@ -655,6 +655,17 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         )
                         debug_log(f"[RECEIVE] Attached containerID={containerID} and itemNum={itemNum} to existing order={orderNumber}.")
                         return
+                    else:
+                        # Create new row if no matching order with NULL containerID
+                        cursor.execute(
+                            """
+                            INSERT INTO tracking_data (containerID, orderNumber, itemNum, history)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (containerID, orderNumber, itemNum, new_history_entry)
+                        )
+                        debug_log(f"[RECEIVE] Created new row for orderNumber={orderNumber} with containerID={containerID} and itemNum={itemNum}.")
+                        return
 
                 if isoBarcode:
                     cursor.execute("SELECT containerID, orderNumber, leadBarcode, prodType, size, history FROM tracking_data WHERE isoBarcode = ?", (isoBarcode,))
@@ -693,6 +704,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
             self.enqueue_tracking_job(job)
             return
+
 
 
         elif parsed_path.path == "/api/moveContainer":
