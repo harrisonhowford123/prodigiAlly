@@ -593,6 +593,79 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.enqueue_tracking_job(job)
             return
 
+        elif parsed_path.path == "/api/receivePrintData":
+            debug_log("[GET] Print data received")
+
+            # --- Parse query parameters ---
+            containerID = query.get("containerID", [None])[0]
+            orderNumber = query.get("orderNumber", [None])[0]
+            leadBarcode = query.get("leadBarcode", [None])[0]
+            isoBarcode = query.get("isoBarcode", [None])[0]
+            workstation = query.get("workstation", [None])[0] or ""
+            employeeName = query.get("employeeName", [None])[0] or ""
+            prodType = query.get("prodType", [None])[0] or None
+            size = query.get("size", [None])[0] or None
+
+            debug_log(f"[RECEIVE] containerID={containerID}, orderNumber={orderNumber}, leadBarcode={leadBarcode}, isoBarcode={isoBarcode}, prodType={prodType}, size={size}")
+
+            def job(cursor):
+                nonlocal isoBarcode, workstation, employeeName, containerID, orderNumber, leadBarcode, prodType, size
+
+                # Create history entry (copied from orderTrack logic)
+                new_history_entry = f"{datetime.now().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
+
+                def append_history(existing_history, new_line):
+                    if not existing_history or existing_history.strip() == "":
+                        return new_line
+                    lines = existing_history.strip().split("\n")
+
+                    def strip_timestamp(line):
+                        parts = line.split(" | ", 1)
+                        return parts[1] if len(parts) > 1 else line
+
+                    if strip_timestamp(lines[-1]) != strip_timestamp(new_line):
+                        lines.append(new_line)
+                    return "\n".join(lines)
+
+                if isoBarcode:
+                    cursor.execute("SELECT containerID, orderNumber, leadBarcode, prodType, size, history FROM tracking_data WHERE isoBarcode = ?", (isoBarcode,))
+                    existing = cursor.fetchone()
+
+                    if existing:
+                        container_existing, order_existing, lead_existing, prod_existing, size_existing, history_existing = existing
+                        updated_history = append_history(history_existing, new_history_entry)
+
+                        # Preserve existing containerID if new one is None
+                        container_to_use = containerID if containerID is not None else container_existing
+                        order_to_use = orderNumber if orderNumber else order_existing
+                        lead_to_use = leadBarcode if leadBarcode else lead_existing
+                        prod_to_use = prodType if prodType else prod_existing
+                        size_to_use = size if size else size_existing
+
+                        cursor.execute(
+                            """
+                            UPDATE tracking_data
+                            SET history = ?, containerID = ?, orderNumber = ?, leadBarcode = ?, prodType = ?, size = ?
+                            WHERE isoBarcode = ?
+                            """,
+                            (updated_history, container_to_use, order_to_use, lead_to_use, prod_to_use, size_to_use, isoBarcode)
+                        )
+                        debug_log(f"[RECEIVE] Updated row for isoBarcode={isoBarcode} with preserved existing values when new ones are missing.")
+                    else:
+                        # Insert new row if ISO does not exist
+                        cursor.execute(
+                            """
+                            INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, prodType, size, history)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (containerID, orderNumber, leadBarcode, isoBarcode, prodType, size, new_history_entry)
+                        )
+                        debug_log(f"[RECEIVE] Inserted new row for isoBarcode={isoBarcode}.")
+
+            self.enqueue_tracking_job(job)
+            return
+
+
         elif parsed_path.path == "/api/moveContainer":
             debug_log("[GET] Move container request")
             isoBarcode = query.get("isoBarcode", [None])[0]
