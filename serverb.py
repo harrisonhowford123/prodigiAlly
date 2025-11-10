@@ -105,7 +105,8 @@ def init_tracking_db():
                 isoBarcode TEXT UNIQUE,
                 history TEXT,
                 itemNum INTEGER,
-                prodType TEXT
+                prodType TEXT,
+                size TEXT
             )
         """)
 
@@ -605,11 +606,12 @@ class SimpleHandler(BaseHTTPRequestHandler):
             employeeName = query.get("employeeName", [None])[0] or ""
             prodType = query.get("prodType", [None])[0] or None
             size = query.get("size", [None])[0] or None
+            itemNum = query.get("itemNum", [None])[0] or None
 
-            debug_log(f"[RECEIVE] containerID={containerID}, orderNumber={orderNumber}, leadBarcode={leadBarcode}, isoBarcode={isoBarcode}, prodType={prodType}, size={size}")
+            debug_log(f"[RECEIVE] containerID={containerID}, orderNumber={orderNumber}, leadBarcode={leadBarcode}, isoBarcode={isoBarcode}, prodType={prodType}, size={size}, itemNum={itemNum}")
 
             def job(cursor):
-                nonlocal isoBarcode, workstation, employeeName, containerID, orderNumber, leadBarcode, prodType, size
+                nonlocal isoBarcode, workstation, employeeName, containerID, orderNumber, leadBarcode, prodType, size, itemNum
 
                 # Create history entry (copied from orderTrack logic)
                 new_history_entry = f"{datetime.now().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
@@ -626,6 +628,33 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     if strip_timestamp(lines[-1]) != strip_timestamp(new_line):
                         lines.append(new_line)
                     return "\n".join(lines)
+
+                # --- If containerID is provided, update matching order with NULL containerID ---
+                if containerID is not None and orderNumber is not None:
+                    cursor.execute(
+                        """
+                        SELECT rowid, history FROM tracking_data
+                        WHERE orderNumber = ? AND containerID IS NULL
+                        ORDER BY rowid ASC LIMIT 1
+                        """,
+                        (orderNumber,)
+                    )
+                    row = cursor.fetchone()
+
+                    if row:
+                        rowid, history_existing = row
+                        updated_history = append_history(history_existing, new_history_entry)
+
+                        cursor.execute(
+                            """
+                            UPDATE tracking_data
+                            SET containerID = ?, itemNum = ?, history = ?
+                            WHERE rowid = ?
+                            """,
+                            (containerID, itemNum, updated_history, rowid)
+                        )
+                        debug_log(f"[RECEIVE] Attached containerID={containerID} and itemNum={itemNum} to existing order={orderNumber}.")
+                        return
 
                 if isoBarcode:
                     cursor.execute("SELECT containerID, orderNumber, leadBarcode, prodType, size, history FROM tracking_data WHERE isoBarcode = ?", (isoBarcode,))
