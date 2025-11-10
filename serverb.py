@@ -1238,6 +1238,63 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
                 return
 
+        elif parsed_path.path == "/api/getEmployeeTimes":
+            debug_log("[POST] Matched: /api/getEmployeeTimes")
+            employee_name = data.get("employeeName")
+
+            if not employee_name:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": "No employeeName provided"
+                }).encode("utf-8"))
+                return
+
+            try:
+                with db_lock_main:
+                    conn = sqlite3.connect(MAIN_DB_FILE)
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT start_time, end_time FROM employee_info WHERE employeeName = ?",
+                        (employee_name,)
+                    )
+                    row = cursor.fetchone()
+                    conn.close()
+
+                if row and (row[0] or row[1]):
+                    response = {
+                        "status": "success",
+                        "start_time": row[0],
+                        "end_time": row[1]
+                    }
+                elif row:
+                    response = {"status": "success", "start_time": None, "end_time": None}
+                else:
+                    response = {"status": "error", "message": f"Employee '{employee_name}' not found"}
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+                return
+
+            except Exception as e:
+                debug_log(f"[POST] ERROR in getEmployeeTimes: {e}")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": str(e)
+                }).encode("utf-8"))
+                return
+
+
         elif parsed_path.path == "/api/logEmployeeTime":
             debug_log("[POST] Matched: /api/logEmployeeTime")
             employee_name = data.get("employeeName")
