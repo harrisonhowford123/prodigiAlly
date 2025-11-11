@@ -2,6 +2,7 @@ import sys
 import os
 import re
 from PyPDF2 import PdfReader
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGridLayout, QPushButton, QTableWidget,
@@ -509,6 +510,8 @@ class FileDropbox(DraggableBoxContainer.ResizableRectItem):
                     if path.lower().endswith(('.jpg', '.jpeg', '.png', '.pdf')) and name.lower().startswith('image file')
                 ]
 
+                today_str = datetime.now().strftime('%d-%m-%y')
+
                 if pdf_files:
                     orders_all, leads_all, isos_all, quantities_all, sizes_all, prodtypes_all = [], [], [], [], [], []
                     for pdf in pdf_files:
@@ -525,11 +528,28 @@ class FileDropbox(DraggableBoxContainer.ResizableRectItem):
                         for iso_index, iso in enumerate(isos):
                             prodType = prodtypes_all[idx][iso_index] if idx < len(prodtypes_all) and iso_index < len(prodtypes_all[idx]) else 'Unknown'
                             size = sizes_all[idx][iso_index] if idx < len(sizes_all) and iso_index < len(sizes_all[idx]) else 'Unknown'
+
+                            if size and isinstance(size, str):
+                                size = f"{today_str}/{size}"
+
                             quantity = quantities_all[idx][iso_index] if idx < len(quantities_all) and iso_index < len(quantities_all[idx]) else 1
 
                             for q_num in range(1, quantity + 1):
                                 iso_name = iso if q_num == 1 else f"{iso}_{q_num}"
-                                send_print_data(
+
+                                print("Sending to server with attributes:")
+                                print({
+                                    'containerID': "",
+                                    'orderNumber': order,
+                                    'leadBarcode': leads_all[idx] if idx < len(leads_all) else None,
+                                    'isoBarcode': iso_name,
+                                    'workstation': 'Printing Station: Order File Processed',
+                                    'employeeName': employee_name,
+                                    'prodType': prodType,
+                                    'size': size
+                                })
+
+                                response = send_print_data(
                                     containerID="",
                                     orderNumber=order,
                                     leadBarcode=leads_all[idx] if idx < len(leads_all) else None,
@@ -540,6 +560,8 @@ class FileDropbox(DraggableBoxContainer.ResizableRectItem):
                                     size=size
                                 )
 
+                                print("Server response:", response)
+
                 if image_files:
                     container_id = fetch_next_container_id()
                     for image_path in image_files:
@@ -547,7 +569,21 @@ class FileDropbox(DraggableBoxContainer.ResizableRectItem):
                         m = re.search(r"po00(\d+)_li(\d+)_?", image_name.lower())
                         order_number = m.group(1) if m else None
                         item_num = f"li{m.group(2).lstrip('0')}" if m else None
-                        send_print_data(
+
+                        print("Sending to server with attributes:")
+                        print({
+                            'containerID': container_id,
+                            'orderNumber': order_number,
+                            'leadBarcode': None,
+                            'isoBarcode': image_name,
+                            'workstation': "Printing Station: Image File Processed",
+                            'employeeName': employee_name,
+                            'prodType': None,
+                            'size': None,
+                            'itemNum': item_num
+                        })
+
+                        response = send_print_data(
                             containerID=container_id,
                             orderNumber=order_number,
                             leadBarcode=None,
@@ -558,6 +594,8 @@ class FileDropbox(DraggableBoxContainer.ResizableRectItem):
                             size=None,
                             itemNum=item_num
                         )
+
+                        print("Server response:", response)
 
                 self.drop_widget.pdf_paths.clear()
                 if hasattr(self.drop_widget, 'clear'):

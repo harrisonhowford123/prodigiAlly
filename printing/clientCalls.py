@@ -139,5 +139,34 @@ def log_employee_time(employeeName: str, start_time: datetime, end_time: datetim
     except requests.RequestException as e:
         return {"status": "error", "message": str(e)}
 
+def fetch_cut_list_by_date(date_str: str, server_ip=target_ip, port=8080):
+    """
+    Fetches a list of [prodType, size, orderNumber] from the server where
+    the 'size' column begins with the given date (format: DD-MM-YY).
+    Returns a list of lists or an empty list on failure.
+    """
 
+    url = f"http://{server_ip}:{port}/api/cutListByDate"
+    params = {"date": date_str}
 
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+
+        # Ensure we only parse once and fully
+        data = response.json()
+
+        if data.get("status") != "success":
+            print(f"[Client] Server error: {data.get('message')}")
+            return []
+
+        return data.get("cutList", [])
+
+    except json.JSONDecodeError as e:
+        print(f"[Client] JSON parse error: {e}")
+        print(f"[Client] Raw response text: {response.text[:300]}")
+        return []
+
+    except requests.RequestException as e:
+        print(f"[Client] Request failed: {e}")
+        return []
