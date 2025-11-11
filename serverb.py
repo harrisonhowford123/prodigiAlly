@@ -191,6 +191,63 @@ class SimpleHandler(BaseHTTPRequestHandler):
             }
             debug_log(f"[GET] Returning {len(rows)} employees")
 
+        elif parsed_path.path == "/api/cutListByDate":
+            debug_log("[GET] Fetching cut list by date")
+            try:
+                date_str = query.get("date", [None])[0]
+                if not date_str:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "status": "error",
+                        "message": "Missing 'date' query parameter (expected format DD-MM-YY)"
+                    }).encode("utf-8"))
+                    return
+
+                # Open tracking DB in READ-ONLY mode
+                conn = sqlite3.connect(f"file:{TRACKING_DB_FILE}?mode=ro", uri=True, check_same_thread=False)
+                cursor = conn.cursor()
+
+                # Query rows where size starts with the date string
+                cursor.execute("""
+                    SELECT prodType, size, orderNumber
+                    FROM tracking_data
+                    WHERE size LIKE ? || '%'
+                """, (date_str,))
+                rows = cursor.fetchall()
+                conn.close()
+
+                # Build 2D list: [prodType, size, orderNumber]
+                cut_list = [[r[0] or "", r[1] or "", r[2] or ""] for r in rows]
+
+                response = {
+                    "status": "success",
+                    "date": date_str,
+                    "count": len(cut_list),
+                    "cutList": cut_list
+                }
+
+                debug_log(f"[GET] Returning {len(cut_list)} items for date={date_str}")
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            except Exception as e:
+                debug_log(f"[GET] Error in cutListByDate: {e}")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": str(e)
+                }).encode("utf-8"))
+
         elif parsed_path.path == "/api/manualTasks":
             debug_log("[GET] Fetching manual tasks")
             try:
