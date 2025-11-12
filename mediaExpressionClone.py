@@ -328,16 +328,25 @@ class ThumbnailApp:
         top_frame.pack(side=tk.TOP, fill=tk.X)
         top_frame.pack_propagate(False)
         
+        # Button style for macOS compatibility
+        button_config = {
+            "font": ("Arial", 12),
+            "padx": 20,
+            "pady": 5,
+            "relief": tk.RAISED,
+            "borderwidth": 2
+        }
+        
         btn_add = tk.Button(top_frame, text="Add Images", command=self.add_images, 
-                           bg="#4CAF50", fg="white", font=("Arial", 12), padx=20, pady=5)
+                           bg="#4CAF50", fg="white", **button_config)
         btn_add.pack(side=tk.LEFT, padx=10, pady=10)
         
         btn_export = tk.Button(top_frame, text="Export to PDF", command=self.export_pdf,
-                              bg="#2196F3", fg="white", font=("Arial", 12), padx=20, pady=5)
+                              bg="#2196F3", fg="white", **button_config)
         btn_export.pack(side=tk.LEFT, padx=10, pady=10)
         
         btn_clear = tk.Button(top_frame, text="Clear All", command=self.clear_all,
-                             bg="#f44336", fg="white", font=("Arial", 12), padx=20, pady=5)
+                             bg="#f44336", fg="white", **button_config)
         btn_clear.pack(side=tk.LEFT, padx=10, pady=10)
         
         # Canvas for images - fixed size, no resizing
@@ -491,17 +500,66 @@ class ThumbnailApp:
             messagebox.showwarning("Warning", "No images to export!")
             return
         
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".pdf",
-            filetypes=[("PDF files", "*.pdf")]
-        )
-        
-        if not filename:
-            return
-        
         try:
-            # Create a snapshot of the canvas
-            self.save_canvas_as_pdf(filename)
+            # Capture canvas BEFORE opening file dialog
+            from PIL import ImageGrab
+            import tempfile
+            
+            # Get canvas position on screen
+            x = self.canvas.winfo_rootx()
+            y = self.canvas.winfo_rooty()
+            w = self.canvas.winfo_width()
+            h = self.canvas.winfo_height()
+            
+            # Capture canvas as image
+            canvas_image = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+            
+            # Save to temporary file
+            temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            temp_img_path = temp_img.name
+            canvas_image.save(temp_img_path)
+            temp_img.close()
+            
+            # NOW open file dialog
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".pdf",
+                filetypes=[("PDF files", "*.pdf")]
+            )
+            
+            if not filename:
+                # Clean up temp file if user cancels
+                import os
+                os.unlink(temp_img_path)
+                return
+            
+            # Create PDF with the captured canvas image
+            c = canvas.Canvas(filename, pagesize=letter)
+            page_width, page_height = letter
+            
+            # Calculate scaling to fit page while maintaining aspect ratio
+            img_aspect = w / h
+            page_aspect = page_width / page_height
+            
+            if img_aspect > page_aspect:
+                # Image is wider - fit to width
+                pdf_width = page_width
+                pdf_height = page_width / img_aspect
+                pdf_x = 0
+                pdf_y = (page_height - pdf_height) / 2
+            else:
+                # Image is taller - fit to height
+                pdf_height = page_height
+                pdf_width = page_height * img_aspect
+                pdf_x = (page_width - pdf_width) / 2
+                pdf_y = 0
+            
+            c.drawImage(temp_img_path, pdf_x, pdf_y, width=pdf_width, height=pdf_height)
+            c.save()
+            
+            # Clean up temp file
+            import os
+            os.unlink(temp_img_path)
+            
             messagebox.showinfo("Success", f"PDF saved to: {filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export PDF: {str(e)}")
