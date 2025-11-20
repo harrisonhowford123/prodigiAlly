@@ -770,12 +770,15 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
             orderNumber = query.get("orderNumber", [None])[0]
             if not orderNumber:
-                self._send_json({"error": "orderNumber is required"}, status=400)
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "orderNumber is required"}).encode("utf-8"))
                 return
 
             try:
-                # Direct read from the tracking DB
-                conn = sqlite3.connect(self.tracking_db_path)
+                conn = sqlite3.connect(TRACKING_DB_FILE)
                 cursor = conn.cursor()
 
                 cursor.execute(
@@ -809,16 +812,26 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         "history": history,
                     })
 
-                self._send_json({
+                # Send response using your server's actual pattern
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
                     "orderNumber": orderNumber,
                     "records": results
-                }, status=200)
+                }).encode("utf-8"))
 
             except Exception as e:
                 debug_log(f"[ERROR] {e}")
-                self._send_json({"error": str(e)}, status=500)
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
             return
+
 
 
         elif parsed_path.path == "/api/moveContainer":
