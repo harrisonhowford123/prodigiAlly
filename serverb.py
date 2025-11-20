@@ -766,28 +766,51 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     return
 
         elif parsed_path.path == "/api/getOrderRows":
+            debug_log("[GET] Fetch all rows for given orderNumber")
+
             orderNumber = query.get("orderNumber", [None])[0]
             if not orderNumber:
                 self._send_json({"error": "orderNumber is required"}, status=400)
                 return
 
-            conn = sqlite3.connect(DB_PATH)
+            # Direct database access (reads should NOT be queued)
+            conn = sqlite3.connect(self.tracking_db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT rowid, containerID, orderNumber, leadBarcode, isoBarcode,
                     prodType, size, itemNum, history
                 FROM tracking_data
                 WHERE orderNumber = ?
                 ORDER BY rowid ASC
-            """, (orderNumber,))
+                """,
+                (orderNumber,)
+            )
 
             rows = cursor.fetchall()
             conn.close()
 
-            results = [...]
-            self._send_json({"orderNumber": orderNumber, "records": results})
+            results = []
+            for r in rows:
+                (rowid, containerID, orderNum, leadBC, isoBC,
+                prodType, size, itemNum, history) = r
+
+                results.append({
+                    "rowid": rowid,
+                    "containerID": containerID,
+                    "orderNumber": orderNum,
+                    "leadBarcode": leadBC,
+                    "isoBarcode": isoBC,
+                    "prodType": prodType,
+                    "size": size,
+                    "itemNum": itemNum,
+                    "history": history,
+                })
+
+            self._send_json({"orderNumber": orderNumber, "records": results}, status=200)
             return
+
 
 
         elif parsed_path.path == "/api/moveContainer":
