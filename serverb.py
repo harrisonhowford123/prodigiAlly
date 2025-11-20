@@ -773,44 +773,52 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "orderNumber is required"}, status=400)
                 return
 
-            # Direct database access (reads should NOT be queued)
-            conn = sqlite3.connect(self.tracking_db_path)
-            cursor = conn.cursor()
+            try:
+                # Direct read from the tracking DB
+                conn = sqlite3.connect(self.tracking_db_path)
+                cursor = conn.cursor()
 
-            cursor.execute(
-                """
-                SELECT rowid, containerID, orderNumber, leadBarcode, isoBarcode,
-                    prodType, size, itemNum, history
-                FROM tracking_data
-                WHERE orderNumber = ?
-                ORDER BY rowid ASC
-                """,
-                (orderNumber,)
-            )
+                cursor.execute(
+                    """
+                    SELECT rowid, containerID, orderNumber, leadBarcode, isoBarcode,
+                        prodType, size, itemNum, history
+                    FROM tracking_data
+                    WHERE orderNumber = ?
+                    ORDER BY rowid ASC
+                    """,
+                    (orderNumber,)
+                )
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
+                conn.close()
 
-            results = []
-            for r in rows:
-                (rowid, containerID, orderNum, leadBC, isoBC,
-                prodType, size, itemNum, history) = r
+                results = []
+                for r in rows:
+                    (rowid, containerID, orderNum, leadBC, isoBC,
+                    prodType, size, itemNum, history) = r
 
-                results.append({
-                    "rowid": rowid,
-                    "containerID": containerID,
-                    "orderNumber": orderNum,
-                    "leadBarcode": leadBC,
-                    "isoBarcode": isoBC,
-                    "prodType": prodType,
-                    "size": size,
-                    "itemNum": itemNum,
-                    "history": history,
-                })
+                    results.append({
+                        "rowid": rowid,
+                        "containerID": containerID,
+                        "orderNumber": orderNum,
+                        "leadBarcode": leadBC,
+                        "isoBarcode": isoBC,
+                        "prodType": prodType,
+                        "size": size,
+                        "itemNum": itemNum,
+                        "history": history,
+                    })
 
-            self._send_json({"orderNumber": orderNumber, "records": results}, status=200)
+                self._send_json({
+                    "orderNumber": orderNumber,
+                    "records": results
+                }, status=200)
+
+            except Exception as e:
+                debug_log(f"[ERROR] {e}")
+                self._send_json({"error": str(e)}, status=500)
+
             return
-
 
 
         elif parsed_path.path == "/api/moveContainer":
