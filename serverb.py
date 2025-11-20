@@ -655,115 +655,156 @@ class SimpleHandler(BaseHTTPRequestHandler):
             return
 
         elif parsed_path.path == "/api/receivePrintData":
-                    debug_log("[GET] Print data received")
+            debug_log("[GET] Print data received")
 
-                    # --- Parse query parameters ---
-                    containerID = query.get("containerID", [None])[0]
-                    orderNumber = query.get("orderNumber", [None])[0]
-                    leadBarcode = query.get("leadBarcode", [None])[0]
-                    isoBarcode = query.get("isoBarcode", [None])[0]
-                    workstation = query.get("workstation", [None])[0] or ""
-                    employeeName = query.get("employeeName", [None])[0] or ""
-                    prodType = query.get("prodType", [None])[0] or None
-                    size = query.get("size", [None])[0] or None
-                    itemNum = query.get("itemNum", [None])[0] or None
+            # --- Parse query parameters ---
+            containerID = query.get("containerID", [None])[0]
+            orderNumber = query.get("orderNumber", [None])[0]
+            leadBarcode = query.get("leadBarcode", [None])[0]
+            isoBarcode = query.get("isoBarcode", [None])[0]
+            workstation = query.get("workstation", [None])[0] or ""
+            employeeName = query.get("employeeName", [None])[0] or ""
+            prodType = query.get("prodType", [None])[0] or None
+            size = query.get("size", [None])[0] or None
+            itemNum = query.get("itemNum", [None])[0] or None
 
-                    debug_log(f"[RECEIVE] containerID={containerID}, orderNumber={orderNumber}, leadBarcode={leadBarcode}, isoBarcode={isoBarcode}, prodType={prodType}, size={size}, itemNum={itemNum}")
+            debug_log(f"[RECEIVE] containerID={containerID}, orderNumber={orderNumber}, leadBarcode={leadBarcode}, isoBarcode={isoBarcode}, prodType={prodType}, size={size}, itemNum={itemNum}")
 
-                    def job(cursor):
-                        nonlocal isoBarcode, workstation, employeeName, containerID, orderNumber, leadBarcode, prodType, size, itemNum
+            def job(cursor):
+                nonlocal isoBarcode, workstation, employeeName, containerID, orderNumber, leadBarcode, prodType, size, itemNum
 
-                        # Create history entry (copied from orderTrack logic)
-                        new_history_entry = f"{datetime.now().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
+                # Create history entry
+                new_history_entry = f"{datetime.now().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
 
-                        def append_history(existing_history, new_line):
-                            if not existing_history or existing_history.strip() == "":
-                                return new_line
-                            lines = existing_history.strip().split("\n")
+                def append_history(existing_history, new_line):
+                    if not existing_history or existing_history.strip() == "":
+                        return new_line
+                    lines = existing_history.strip().split("\n")
 
-                            def strip_timestamp(line):
-                                parts = line.split(" | ", 1)
-                                return parts[1] if len(parts) > 1 else line
+                    def strip_timestamp(line):
+                        parts = line.split(" | ", 1)
+                        return parts[1] if len(parts) > 1 else line
 
-                            if strip_timestamp(lines[-1]) != strip_timestamp(new_line):
-                                lines.append(new_line)
-                            return "\n".join(lines)
+                    if strip_timestamp(lines[-1]) != strip_timestamp(new_line):
+                        lines.append(new_line)
+                    return "\n".join(lines)
 
-                        # --- If containerID is provided, update matching order with NULL containerID ---
-                        if containerID is not None and orderNumber is not None:
-                            cursor.execute(
-                                """
-                                SELECT rowid, history FROM tracking_data
-                                WHERE orderNumber = ? AND containerID IS NULL
-                                ORDER BY rowid ASC LIMIT 1
-                                """,
-                                (orderNumber,)
-                            )
-                            row = cursor.fetchone()
+                # ---------------------------------------------------------
+                # 1) Normal CONTAINER branch
+                # ---------------------------------------------------------
+                if containerID is not None and orderNumber is not None:
+                    cursor.execute(
+                        """
+                        SELECT rowid, history FROM tracking_data
+                        WHERE orderNumber = ? AND containerID IS NULL
+                        ORDER BY rowid ASC LIMIT 1
+                        """,
+                        (orderNumber,)
+                    )
+                    row = cursor.fetchone()
 
-                            if row:
-                                rowid, history_existing = row
-                                updated_history = append_history(history_existing, new_history_entry)
+                    if row:
+                        rowid, history_existing = row
+                        updated_history = append_history(history_existing, new_history_entry)
 
-                                cursor.execute(
-                                    """
-                                    UPDATE tracking_data
-                                    SET containerID = ?, itemNum = ?, history = ?
-                                    WHERE rowid = ?
-                                    """,
-                                    (containerID, itemNum, updated_history, rowid)
-                                )
-                                debug_log(f"[RECEIVE] Attached containerID={containerID} and itemNum={itemNum} to existing order={orderNumber}.")
-                                return
-                            else:
-                                # Create new row if no matching order with NULL containerID
-                                cursor.execute(
-                                    """
-                                    INSERT INTO tracking_data (containerID, orderNumber, itemNum, history)
-                                    VALUES (?, ?, ?, ?)
-                                    """,
-                                    (containerID, orderNumber, itemNum, new_history_entry)
-                                )
-                                debug_log(f"[RECEIVE] Created new row for orderNumber={orderNumber} with containerID={containerID} and itemNum={itemNum}.")
-                                return
+                        cursor.execute(
+                            """
+                            UPDATE tracking_data
+                            SET containerID = ?, itemNum = ?, history = ?
+                            WHERE rowid = ?
+                            """,
+                            (containerID, itemNum, updated_history, rowid)
+                        )
+                        debug_log(f"[RECEIVE] Attached containerID={containerID} and itemNum={itemNum} to existing order={orderNumber}.")
+                        return
+                    else:
+                        cursor.execute(
+                            """
+                            INSERT INTO tracking_data (containerID, orderNumber, itemNum, history)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (containerID, orderNumber, itemNum, new_history_entry)
+                        )
+                        debug_log(f"[RECEIVE] Created new row for orderNumber={orderNumber} with containerID={containerID} and itemNum={itemNum}.")
+                        return
 
-                        if isoBarcode:
-                            cursor.execute("SELECT containerID, orderNumber, leadBarcode, prodType, size, history FROM tracking_data WHERE isoBarcode = ?", (isoBarcode,))
-                            existing = cursor.fetchone()
+                # ---------------------------------------------------------
+                # 2) ISO BRANCH
+                # ---------------------------------------------------------
+                if isoBarcode:
 
-                            if existing:
-                                container_existing, order_existing, lead_existing, prod_existing, size_existing, history_existing = existing
-                                updated_history = append_history(history_existing, new_history_entry)
+                    # First check if ISO already exists
+                    cursor.execute("""
+                        SELECT containerID, orderNumber, leadBarcode, prodType, size, history
+                        FROM tracking_data
+                        WHERE isoBarcode = ?
+                    """, (isoBarcode,))
+                    existing = cursor.fetchone()
 
-                                # Preserve existing containerID if new one is None
-                                container_to_use = containerID if containerID is not None else container_existing
-                                order_to_use = orderNumber if orderNumber else order_existing
-                                lead_to_use = leadBarcode if leadBarcode else lead_existing
-                                prod_to_use = prodType if prodType else prod_existing
-                                size_to_use = size if size else size_existing
+                    if existing:
+                        # Existing ISO row → update it
+                        container_existing, order_existing, lead_existing, prod_existing, size_existing, history_existing = existing
+                        updated_history = append_history(history_existing, new_history_entry)
 
-                                cursor.execute(
-                                    """
-                                    UPDATE tracking_data
-                                    SET history = ?, containerID = ?, orderNumber = ?, leadBarcode = ?, prodType = ?, size = ?
-                                    WHERE isoBarcode = ?
-                                    """,
-                                    (updated_history, container_to_use, order_to_use, lead_to_use, prod_to_use, size_to_use, isoBarcode)
-                                )
-                                debug_log(f"[RECEIVE] Updated row for isoBarcode={isoBarcode} with preserved existing values when new ones are missing.")
-                            else:
-                                # Insert new row if ISO does not exist
-                                cursor.execute(
-                                    """
-                                    INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, prodType, size, history)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                                    """,
-                                    (containerID, orderNumber, leadBarcode, isoBarcode, prodType, size, new_history_entry)
-                                )
-                                debug_log(f"[RECEIVE] Inserted new row for isoBarcode={isoBarcode}.")
+                        container_to_use = containerID if containerID is not None else container_existing
+                        order_to_use = orderNumber if orderNumber else order_existing
+                        lead_to_use = leadBarcode if leadBarcode else lead_existing
+                        prod_to_use = prodType if prodType else prod_existing
+                        size_to_use = size if size else size_existing
 
-                    self.enqueue_tracking_job(job)
+                        cursor.execute(
+                            """
+                            UPDATE tracking_data
+                            SET history = ?, containerID = ?, orderNumber = ?, leadBarcode = ?, prodType = ?, size = ?
+                            WHERE isoBarcode = ?
+                            """,
+                            (updated_history, container_to_use, order_to_use, lead_to_use, prod_to_use, size_to_use, isoBarcode)
+                        )
+                        debug_log(f"[RECEIVE] Updated existing ISO row {isoBarcode}.")
+                        return
+
+                    # ---------------------------------------------------------
+                    # NEW FUNCTIONALITY:
+                    # Try to merge with existing orderNumber rows that have no ISO yet
+                    # ---------------------------------------------------------
+                    if orderNumber:
+                        cursor.execute("""
+                            SELECT rowid, history
+                            FROM tracking_data
+                            WHERE orderNumber = ? AND isoBarcode IS NULL
+                            ORDER BY rowid ASC LIMIT 1
+                        """, (orderNumber,))
+                        row = cursor.fetchone()
+
+                        if row:
+                            rowid, history_existing = row
+                            updated_history = append_history(history_existing, new_history_entry)
+
+                            cursor.execute("""
+                                UPDATE tracking_data
+                                SET isoBarcode = ?, leadBarcode = ?, prodType = ?, size = ?, history = ?
+                                WHERE rowid = ?
+                            """, (isoBarcode, leadBarcode, prodType, size, updated_history, rowid))
+
+                            debug_log(f"[RECEIVE] Merged new ISO into existing order row {orderNumber} (rowid={rowid}).")
+                            return
+
+                    # ---------------------------------------------------------
+                    # If no ISO match AND no orderNumber-without-ISO → Insert new row
+                    # ---------------------------------------------------------
+                    cursor.execute(
+                        """
+                        INSERT INTO tracking_data (containerID, orderNumber, leadBarcode, isoBarcode, prodType, size, history)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (containerID, orderNumber, leadBarcode, isoBarcode, prodType, size, new_history_entry)
+                    )
+                    debug_log(f"[RECEIVE] Inserted brand new ISO row for {isoBarcode}.")
                     return
+
+            self.enqueue_tracking_job(job)
+            return
+
 
         elif parsed_path.path == "/api/getOrderRows":
             debug_log("[GET] Fetch all rows for given orderNumber")
