@@ -439,19 +439,31 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 # Create history entry
                 new_history_entry = f"{datetime.now().replace(second=0, microsecond=0).isoformat()} | {workstation} | {employeeName}"
 
-                # --- Helper: append history ---
                 def append_history(existing_history, new_line):
                     if not existing_history or existing_history.strip() == "":
+                        # Apply FloatCanv rule even on first entry
+                        if "FloatCanv" in new_line:
+                            new_line = new_line.replace("FloatCanv", "FloatCanv & FloatStretch")
                         return new_line
+
                     lines = existing_history.strip().split("\n")
 
                     def strip_timestamp(line):
                         parts = line.split(" | ", 1)
                         return parts[1] if len(parts) > 1 else line
 
-                    if strip_timestamp(lines[-1]) != strip_timestamp(new_line):
+                    last_line = lines[-1]
+
+                    # --- Special FloatCanv rule ---
+                    if "FloatCanv" in new_line and "CanvMach" not in last_line:
+                        new_line = new_line.replace("FloatCanv", "FloatCanv & FloatStretch")
+
+                    # --- Normal duplicate-prevention logic ---
+                    if strip_timestamp(last_line) != strip_timestamp(new_line):
                         lines.append(new_line)
+
                     return "\n".join(lines)
+
 
                 # --- ISO barcode branch ---
                 if isoBarcode:
