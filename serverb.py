@@ -765,49 +765,30 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     self.enqueue_tracking_job(job)
                     return
 
-        # --- New endpoint: Fetch all rows for given orderNumber ---
         elif parsed_path.path == "/api/getOrderRows":
-                    debug_log("[GET] Fetch all rows for given orderNumber")
+            orderNumber = query.get("orderNumber", [None])[0]
+            if not orderNumber:
+                self._send_json({"error": "orderNumber is required"}, status=400)
+                return
 
-                    orderNumber = query.get("orderNumber", [None])[0]
-                    if not orderNumber:
-                        self._send_json({"error": "orderNumber is required"}, status=400)
-                        return
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
 
-                    def job(cursor):
-                        cursor.execute(
-                            """
-                            SELECT rowid, containerID, orderNumber, leadBarcode, isoBarcode,
-                                prodType, size, itemNum, history
-                            FROM tracking_data
-                            WHERE orderNumber = ?
-                            ORDER BY rowid ASC
-                            """,
-                            (orderNumber,)
-                        )
+            cursor.execute("""
+                SELECT rowid, containerID, orderNumber, leadBarcode, isoBarcode,
+                    prodType, size, itemNum, history
+                FROM tracking_data
+                WHERE orderNumber = ?
+                ORDER BY rowid ASC
+            """, (orderNumber,))
 
-                        rows = cursor.fetchall()
-                        results = []
-                        for r in rows:
-                            (rowid, containerID, orderNum, leadBC, isoBC,
-                            prodType, size, itemNum, history) = r
+            rows = cursor.fetchall()
+            conn.close()
 
-                            results.append({
-                                "rowid": rowid,
-                                "containerID": containerID,
-                                "orderNumber": orderNum,
-                                "leadBarcode": leadBC,
-                                "isoBarcode": isoBC,
-                                "prodType": prodType,
-                                "size": size,
-                                "itemNum": itemNum,
-                                "history": history,
-                            })
+            results = [...]
+            self._send_json({"orderNumber": orderNumber, "records": results})
+            return
 
-                        self._send_json({"orderNumber": orderNumber, "records": results}, status=200)
-
-                    self.enqueue_tracking_job(job)
-                    return
 
         elif parsed_path.path == "/api/moveContainer":
             debug_log("[GET] Move container request")
