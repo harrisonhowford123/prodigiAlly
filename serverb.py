@@ -191,6 +191,81 @@ class SimpleHandler(BaseHTTPRequestHandler):
             }
             debug_log(f"[GET] Returning {len(rows)} employees")
 
+        elif parsed_path.path == "/api/getOrdersByBarcode":
+            debug_log("[GET] Fetching orders by barcode")
+
+            barcode = query.get("Barcode", [None])[0]
+            if not barcode:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Barcode is required"}).encode("utf-8"))
+                return
+
+            try:
+                conn = sqlite3.connect(TRACKING_DB_FILE)
+                cursor = conn.cursor()
+
+                # Step 1: Find containerID by matching isoBarcode or leadBarcode
+                cursor.execute("""
+                    SELECT containerID
+                    FROM tracking_data
+                    WHERE isoBarcode = ? OR leadBarcode = ?
+                    LIMIT 1
+                """, (barcode, barcode))
+                row = cursor.fetchone()
+
+                if not row or row[0] is None:
+                    conn.close()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "barcode": barcode,
+                        "containerID": None,
+                        "orders": [],
+                        "rowCount": 0
+                    }).encode("utf-8"))
+                    return
+
+                container_id = row[0]
+
+                # Step 2: Fetch *all* rows for that containerID
+                cursor.execute("""
+                    SELECT orderNumber
+                    FROM tracking_data
+                    WHERE containerID = ?
+                """, (container_id,))
+                rows = cursor.fetchall()
+                conn.close()
+
+                row_count = len(rows)
+                unique_orders = list({r[0] for r in rows if r[0] is not None})
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "barcode": barcode,
+                    "containerID": container_id,
+                    "orders": unique_orders,
+                    "rowCount": row_count
+                }).encode("utf-8"))
+
+            except Exception as e:
+                debug_log(f"[ERROR] {e}")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+            return
+
+
         elif parsed_path.path == "/api/cutListByDate":
             debug_log("[GET] Fetching cut list by date")
             try:
